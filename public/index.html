@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="description" content="AGCRO practical intelligence for the next farm decision." />
+  <title>AGCRO · Smart Agriculture</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand-lockup"><div class="brand-mark">A</div><div><div class="brand-name">AGCRO</div><div class="brand-sub">Field intelligence</div></div></div>
+      <div class="farm-switcher"><label for="farm-select">Current farm</label><select id="farm-select"></select></div>
+      <nav class="nav-list" aria-label="Primary navigation">
+        <a href="#dashboard" data-route="dashboard" class="nav-link active"><span class="nav-icon">⌂</span><span>Today</span></a>
+        <a href="#memory" data-route="memory" class="nav-link"><span class="nav-icon">▤</span><span>Farm memory</span></a>
+        <a href="#recommendations" data-route="recommendations" class="nav-link"><span class="nav-icon">✦</span><span>Crop decisions</span></a>
+        <a href="#monitor" data-route="monitor" class="nav-link"><span class="nav-icon">◌</span><span>Monitor & water</span></a>
+        <a href="#profit" data-route="profit" class="nav-link"><span class="nav-icon">↗</span><span>Profit intelligence</span></a>
+        <a href="#market" data-route="market" class="nav-link"><span class="nav-icon">⌁</span><span>Market & schemes</span></a>
+        <a href="#assistant" data-route="assistant" class="nav-link"><span class="nav-icon">✧</span><span>AI explanations</span></a>
+      </nav>
+      <div class="sidebar-bottom"><a href="/admin" class="admin-link">Admin console ↗</a><div class="sidebar-note">A decision-support prototype.<br /><strong>Never a substitute for local agronomy.</strong></div></div>
+    </aside>
+    <main class="main-content">
+      <header class="topbar"><button class="icon-button mobile-menu" id="menu-button" aria-label="Open navigation">☰</button><div class="breadcrumbs"><span>AGCRO</span><span class="crumb-divider">/</span><strong id="page-kicker">Today</strong></div><div class="topbar-actions"><span class="last-updated" id="last-updated">Updating…</span><button class="icon-button notification-button" id="notification-button" aria-label="Open alerts">◔<span class="notification-dot" id="notification-dot"></span></button><button class="avatar-button" id="profile-button" aria-label="Farmer profile">RP</button></div></header>
+      <div id="app" class="page-wrap"><div class="loading-state"><div class="spinner"></div><p>Loading field intelligence…</p></div></div>
+    </main>
+  </div>
+  <div id="toast" class="toast" role="status"></div>
+  <dialog id="action-dialog" class="dialog"><div class="dialog-card"><button class="dialog-close" id="dialog-close" aria-label="Close">×</button><div id="dialog-content"></div></div></dialog>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

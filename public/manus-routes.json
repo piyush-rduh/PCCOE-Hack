@@ -1,0 +1,6 @@
+{
+  "routes": [
+    {"path":"/","title":"AGCRO Farmer Dashboard"},
+    {"path":"/admin","title":"AGCRO Admin Dashboard"}
+  ]
+}

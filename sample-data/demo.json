@@ -1,0 +1,33 @@
+{
+  "sourceMode": "DEMO_DATA",
+  "lastUpdated": "2026-11-03T09:00:00.000Z",
+  "farmers": [{"id":"farmer-1","name":"Ramesh Patil","location":"Haveli, Pune, Maharashtra","phone":"9800000000","role":"farmer"}],
+  "farms": [{"id":"farm-1","farmerId":"farmer-1","name":"North Field Farm","areaAcres":12,"soilType":"Black cotton","waterSource":"Borewell","irrigationMethod":"Drip","availableWaterLitres":50000,"location":"Haveli, Pune","source":"FARMER_ENTERED"}],
+  "zones": [
+    {"id":"zone-1","farmId":"farm-1","name":"Plot A","areaAcres":7,"soilType":"Black cotton","waterAvailability":"Adequate","currentCrop":"Chickpea","growthStage":"Vegetative","sensorId":"esp32-plot-a","source":"FARMER_ENTERED"},
+    {"id":"zone-2","farmId":"farm-1","name":"Plot B","areaAcres":5,"soilType":"Sandy loam","waterAvailability":"Limited","currentCrop":"Chickpea","growthStage":"Vegetative","sensorId":null,"source":"FARMER_ENTERED"}
+  ],
+  "soilTests": [
+    {"id":"soil-1","farmId":"farm-1","zoneId":"zone-1","parameter":"pH","value":7.6,"unit":"","date":"2026-07-06","source":"FARMER_ENTERED"},
+    {"id":"soil-2","farmId":"farm-1","zoneId":"zone-1","parameter":"Organic carbon","value":0.48,"unit":"%","date":"2026-07-06","source":"FARMER_ENTERED"},
+    {"id":"soil-3","farmId":"farm-1","zoneId":"zone-1","parameter":"EC","value":0.5,"unit":"dS/m","date":"2026-07-06","source":"FARMER_ENTERED"},
+    {"id":"soil-4","farmId":"farm-1","zoneId":"zone-1","parameter":"Moisture","value":30,"unit":"%","date":"2026-10-31","source":"SIMULATED_SENSOR"}
+  ],
+  "seasons": [
+    {"id":"season-1","farmId":"farm-1","crop":"Cotton","variety":"Bt hybrid","season":"Kharif","year":2023,"areaAcres":12,"yieldQuintal":60,"sellingPricePerQuintal":6800,"expenses":{"seeds":18000,"fertilizer":30000,"pesticide":15000,"labour":60000,"irrigation":20000,"machinery":25000,"transport":12000,"other":5000},"source":"FARMER_ENTERED"},
+    {"id":"season-2","farmId":"farm-1","crop":"Wheat","variety":"HD-2189","season":"Rabi","year":2024,"areaAcres":12,"yieldQuintal":220,"sellingPricePerQuintal":2300,"expenses":{"seeds":20000,"fertilizer":28000,"pesticide":6000,"labour":40000,"irrigation":15000,"machinery":22000,"transport":10000,"other":4000},"source":"FARMER_ENTERED"},
+    {"id":"season-3","farmId":"farm-1","crop":"Soybean","variety":"JS-335","season":"Kharif","year":2025,"areaAcres":12,"yieldQuintal":100,"sellingPricePerQuintal":4600,"expenses":{"seeds":24000,"fertilizer":18000,"pesticide":9000,"labour":45000,"irrigation":12000,"machinery":24000,"transport":9000,"other":4000},"source":"FARMER_ENTERED"}
+  ],
+  "activeCrops": [{"id":"crop-1","farmId":"farm-1","zoneId":"zone-1","crop":"Chickpea","variety":"Digvijay","planted":"2026-09-19","expectedHarvest":"2027-01-17","growthStage":"Vegetative","status":"Healthy","source":"FARMER_ENTERED"}],
+  "activities": [
+    {"id":"activity-1","farmId":"farm-1","zoneId":"zone-1","type":"Irrigation","date":"2026-10-28","quantity":40,"unit":"mm","notes":"Pre-flowering check","source":"FARMER_ENTERED"},
+    {"id":"activity-2","farmId":"farm-1","zoneId":"zone-1","type":"Fertilizer","date":"2026-10-04","quantity":50,"unit":"kg","notes":"DAP basal","source":"FARMER_ENTERED"}
+  ],
+  "sensorDevices": [{"id":"esp32-plot-a","farmId":"farm-1","zoneId":"zone-1","name":"ESP32 Plot A","status":"online","lastReadingAt":"2026-11-03T08:55:00.000Z","source":"SIMULATED_SENSOR","firmware":"agcro-esp32-v1"}],
+  "sensorReadings": [{"id":"reading-1","deviceId":"esp32-plot-a","farmId":"farm-1","zoneId":"zone-1","soilMoisturePct":30,"temperatureC":28.4,"humidityPct":67,"waterLevelPct":62,"waterFlowLpm":0,"recordedAt":"2026-11-03T08:55:00.000Z","source":"SIMULATED_SENSOR"}],
+  "alerts": [{"id":"alert-1","farmId":"farm-1","severity":"warning","category":"water","title":"Review water budget","message":"Projected 15,000 litre deficit under the current three-day outlook.","acknowledged":false,"createdAt":"2026-11-03T08:50:00.000Z","source":"DECISION_ENGINE"}],
+  "decisions": [],
+  "weather": [{"date":"2026-11-03","temperatureC":28,"rainfallMm":0,"humidityPct":63,"source":"SIMULATED_WEATHER"},{"date":"2026-11-04","temperatureC":29,"rainfallMm":0,"humidityPct":58,"source":"SIMULATED_WEATHER"},{"date":"2026-11-05","temperatureC":27,"rainfallMm":18,"humidityPct":74,"source":"SIMULATED_WEATHER"},{"date":"2026-11-06","temperatureC":25,"rainfallMm":42,"humidityPct":81,"source":"SIMULATED_WEATHER"},{"date":"2026-11-07","temperatureC":26,"rainfallMm":4,"humidityPct":72,"source":"SIMULATED_WEATHER"}],
+  "marketListings": [{"id":"market-1","crop":"Soybean","quantityQuintal":30,"pricePerQuintal":4700,"market":"Pune","updatedAt":"2026-10-28","source":"DEMO_MARKET_DATA"},{"id":"market-2","crop":"Wheat","quantityQuintal":50,"pricePerQuintal":2350,"market":"Satara","updatedAt":"2026-10-28","source":"DEMO_MARKET_DATA"}],
+  "schemes": [{"id":"scheme-1","name":"PMFBY crop insurance","description":"Official scheme reference placeholder; verify eligibility and current notification before applying.","officialUrl":"https://pmfby.gov.in/","source":"OFFICIAL_LINK_UNVERIFIED_ELIGIBILITY"},{"id":"scheme-2","name":"PMKSY micro-irrigation","description":"Official scheme reference placeholder; local eligibility and subsidy rules must be checked.","officialUrl":"https://pmksy.gov.in/","source":"OFFICIAL_LINK_UNVERIFIED_ELIGIBILITY"}]
+}
