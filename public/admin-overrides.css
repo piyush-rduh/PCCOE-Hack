@@ -12,3 +12,59 @@
 .admin-bars b { text-align: right; color: var(--green-900); }
 .admin-bars i { display: block; height: 9px; background: var(--green-700); border-radius: 99px; min-width: 4px; }
 @media (max-width: 560px) { .admin-login-top { align-items: start; flex-direction: column; } .admin-bars > div { grid-template-columns: 86px 1fr 35px; gap: 6px; } }
+.admin-app-shell { min-height: 100vh; }
+.admin-sidebar { overflow-y: auto; }
+.admin-nav-button { width: 100%; border: 0; background: transparent; text-align: left; cursor: pointer; font-family: inherit; }
+.admin-menu-button { display: none; flex: 0 0 38px; margin-right: 10px; }
+.admin-page-wrap { min-width: 0; }
+.admin-page-wrap .page-heading { align-items: start; }
+.admin-demo-label { margin-bottom: 16px; }
+.admin-metrics { margin-bottom: 18px; }
+.admin-filter-bar { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; align-items: end; margin-bottom: 15px; }
+.admin-filter-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; color: var(--muted); font-size: 11px; font-weight: 700; }
+.admin-filter-field input, .admin-filter-field select { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; color: var(--charcoal); background: #fff; font: inherit; }
+.admin-filter-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.admin-pagination { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin: 14px 0; color: var(--muted); font-size: 12px; }
+.admin-pagination .btn { padding: 8px 11px; }
+.admin-dashboard-grid { align-items: start; }
+.admin-dashboard-grid > .card { min-width: 0; }
+.admin-dashboard-grid .data-table { min-width: 620px; }
+.admin-scenario { margin-top: 16px; }
+.admin-scenario-grid { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); margin: 12px 0; }
+.admin-scenario-grid .metric-card p { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.admin-health-grid { margin-bottom: 18px; }
+.admin-health-list { margin: 12px 0; }
+.admin-health-list > div { display: grid; grid-template-columns: minmax(140px, .7fr) minmax(0, 1fr); gap: 12px; border-bottom: 1px solid var(--line); padding: 10px 0; }
+.admin-health-list dt { color: var(--muted); font-size: 12px; font-weight: 700; }
+.admin-health-list dd { margin: 0; overflow-wrap: anywhere; }
+.admin-error { border: 1px solid #f1c7c7; }
+.admin-success { margin-bottom: 14px; }
+.admin-logout-error { margin: 12px; }
+.admin-modal-backdrop { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 18px; background: rgba(15, 30, 20, .48); }
+.admin-modal { width: min(1050px, 100%); max-height: min(88vh, 900px); overflow: auto; padding: 22px; box-shadow: var(--shadow); }
+.admin-detail-section { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 10px; }
+.admin-detail-section p { color: var(--muted); line-height: 1.5; }
+.admin-filter-bar > .admin-filter-actions { grid-column: 1 / -1; }
+@media (max-width: 820px) {
+  .admin-menu-button { display: block; }
+  .admin-sidebar { z-index: 20; }
+  .admin-page-wrap { padding: 22px 14px 36px; }
+  .admin-header-logout { display: none; }
+}
+@media (max-width: 560px) {
+  .admin-page-wrap .page-heading h1 { font-size: 24px; }
+  .admin-app-shell .breadcrumbs { display: none; }
+  .admin-app-shell .topbar-actions { gap: 4px; min-width: 0; }
+  .admin-app-shell .topbar-actions > .provenance { display: none; }
+  .admin-app-shell .language-switcher { gap: 0; padding: 2px; }
+  .admin-app-shell .language-button { padding: 5px 5px; font-size: 9px; }
+  .admin-topbar-refresh { width: 36px; min-width: 36px; padding: 0 !important; overflow: hidden; font-size: 0 !important; }
+  .admin-topbar-refresh::before { content: "↻"; font-size: 20px; }
+  .admin-filter-bar { grid-template-columns: 1fr 1fr; }
+  .admin-filter-field:first-child { grid-column: 1 / -1; }
+  .admin-filter-actions { grid-column: 1 / -1; }
+  .admin-filter-actions .btn { flex: 1; }
+  .admin-pagination { justify-content: space-between; flex-wrap: wrap; }
+  .admin-health-list > div { grid-template-columns: 1fr; gap: 4px; }
+  .admin-modal { padding: 16px; }
+}

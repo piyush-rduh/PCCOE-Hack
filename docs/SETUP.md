@@ -14,6 +14,10 @@ Open the farmer application at `http://localhost:3000/` and the admin surface at
 
 The farmer application supports English, Marathi, and Hindi from the language selector. After signing in, use Farm management to add or edit farms and field zones, and Farm memory to record or update historical seasons, activities, and soil tests. Profile changes are saved through the authenticated API. New farm records are not pre-populated with demonstration readings.
 
+The admin console at `/admin` uses the separately stored `agcro-admin-token` and provides overview, farmer, farm/zone, device, sensor, alert, decision, weather/risk, CSV report, and system-health modules. Admin lists are read-only except device revocation and alert acknowledgement. Device presence is verified only by authenticated live sensor readings; demo-seeded `online` status is not treated as live. The current development store does not record administrative audit events, and the health panel identifies demo or unverified integrations.
+
+To try it locally, run `pnpm start`, open `http://localhost:3000/admin`, and sign in with the local demo administrator account listed below. Use the sidebar modules to inspect records and apply search/date filters. Device revocation and alert acknowledgement affect the active development store; use test data and do not treat demo records as production data.
+
 ---
 
 ## Pre-Seeded Demonstration Accounts
@@ -93,7 +97,7 @@ Automated regression and security validation:
 # Node regression, security, decision-engine, and locale test suite
 pnpm test
 
-# Python agronomic decision engine test suite (2 tests)
+# Python agronomic decision engine test suite
 python -m unittest discover -s python -p "test_*.py"
 
 # Syntax checks on all files

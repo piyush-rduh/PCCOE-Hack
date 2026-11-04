@@ -60,8 +60,23 @@ Server-side identity verification is enforced. Caller-supplied `x-agcro-role` he
 
 | Method | Endpoint | Role | Purpose |
 |---|---|---|---|
-| GET | `/api/admin/overview` | ADMIN | Telemetry, online/offline/revoked devices, alerts, decisions |
-| POST | `/api/admin/devices/:id/revoke` | ADMIN | Revoke compromised or decommissioned IoT devices |
+| GET | `/api/admin/overview` | ADMIN | Backend-derived metrics, recent activities/readings, and stored alerts |
+| GET | `/api/admin/farmers` | ADMIN | Search/sort/paginate farmer account summaries; supports `search`, `dateFrom`, `dateTo`, `sortBy`, `sortOrder`, `page`, and `pageSize` |
+| GET | `/api/admin/farmers/:id` | ADMIN | Read a farmer profile and associated farms, zones, crop history, and activities |
+| GET | `/api/admin/farms` | ADMIN | Search/filter/sort/paginate farm summaries; supports `search`, `farmerId`, date range, sorting, and pagination |
+| GET | `/api/admin/farms/:id` | ADMIN | Read farm, zones, soil tests, seasons, active crops, and activities |
+| GET | `/api/admin/devices` | ADMIN | Device inventory and status filter; no bearer credentials or hashes returned |
+| GET | `/api/admin/readings` | ADMIN | Filter/paginate sensor readings by device, farm, zone, source, and date |
+| GET | `/api/admin/alerts` | ADMIN | Search/filter/paginate stored alerts by farm, severity, acknowledgement state, and date |
+| GET | `/api/admin/decisions` | ADMIN | Read recorded decisions and separately labeled current recommendation/profit scenarios |
+| GET | `/api/admin/weather` | ADMIN | Weather observations with source/update time and separately calculated farm-level drought/flood risk |
+| GET | `/api/admin/health` | ADMIN | Safe API, storage, and integration configuration status; no secret values |
+| GET | `/api/admin/reports/:type.csv` | ADMIN | CSV export for `farmers`, `farms`, `devices`, `readings`, `alerts`, or `activities`; supports farm/farmer/date filters |
+| POST | `/api/admin/devices/:id/revoke` | ADMIN | Revoke a registered IoT device; credential material is not returned |
+
+All `/api/admin/*` routes require a verified JWT whose server-side account role is `ADMIN`. `x-agcro-role` is ignored. The shared `POST /api/alerts/:id/acknowledge` remains farm-scoped and can be used by the owning farmer or an admin.
+
+Device presence is derived from authenticated `LIVE_SENSOR` readings: a reading within 15 minutes (allowing up to five minutes of timestamp skew) is online, an older live reading is offline, and devices without such a reading are unverified. Seeded `status: online` and simulated readings do not establish online status. Global fallback weather is not presented as farm-specific; farm-level climate risks are displayed separately and are not changed by observation date filters. The development store has no administrative audit log, so administrative events are explicitly reported as unavailable. Exports omit password hashes, bearer tokens, and token hashes, and escape formula-leading text values.
 
 ---
 

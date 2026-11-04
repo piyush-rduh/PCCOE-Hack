@@ -798,14 +798,281 @@ export function createApp(customStore) {
   // Admin Operations (Protected by Server-Side Admin Identity)
   // Completely rejects caller-supplied x-agcro-role
   // -------------------------------------------------------------
+  const adminQueryString = (value, name, maxLength = 160) => {
+    if (value === undefined) return '';
+    if (typeof value !== 'string' || value.length > maxLength) {
+      const error = new Error(`${name} must be a string no longer than ${maxLength} characters`);
+      error.status = 400;
+      error.code = 'validation_error';
+      throw error;
+    }
+    return value.trim();
+  };
+  const adminQueryDate = (value, name) => {
+    if (value === undefined || value === '') return '';
+    const date = adminQueryString(value, name, 10);
+    const parsed = new Date(`${date}T00:00:00.000Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+      const error = new Error(`${name} must be a valid YYYY-MM-DD date`);
+      error.status = 400;
+      error.code = 'validation_error';
+      throw error;
+    }
+    return date;
+  };
+  const adminDateRange = (query) => {
+    const from = adminQueryDate(query.dateFrom, 'dateFrom');
+    const to = adminQueryDate(query.dateTo, 'dateTo');
+    if (from && to && from > to) {
+      const error = new Error('dateFrom must not be after dateTo');
+      error.status = 400;
+      error.code = 'validation_error';
+      throw error;
+    }
+    return { from, to };
+  };
+  const adminPagination = (query) => {
+    const parse = (value, fallback, name, maximum) => {
+      if (value === undefined) return fallback;
+      if (typeof value !== 'string' || !/^\d+$/.test(value) || Number(value) < 1 || Number(value) > maximum) {
+        const error = new Error(`${name} must be an integer between 1 and ${maximum}`);
+        error.status = 400;
+        error.code = 'validation_error';
+        throw error;
+      }
+      return Number(value);
+    };
+    return {
+      page: parse(query.page, 1, 'page', 1000000),
+      pageSize: parse(query.pageSize, 25, 'pageSize', 100)
+    };
+  };
+  const adminPage = (items, query) => {
+    const { page, pageSize } = adminPagination(query);
+    const start = (page - 1) * pageSize;
+    return { items: items.slice(start, start + pageSize), total: items.length, page, pageSize };
+  };
+  const adminSort = (items, query, allowed, defaultKey) => {
+    const key = adminQueryString(query.sortBy, 'sortBy', 32) || defaultKey;
+    const order = adminQueryString(query.sortOrder, 'sortOrder', 4) || 'asc';
+    if (!allowed.includes(key) || !['asc', 'desc'].includes(order)) {
+      const error = new Error('Unsupported sort field or order');
+      error.status = 400;
+      error.code = 'validation_error';
+      throw error;
+    }
+    const multiplier = order === 'desc' ? -1 : 1;
+    return items.sort((a, b) => {
+      const left = a[key] == null ? '' : String(a[key]);
+      const right = b[key] == null ? '' : String(b[key]);
+      return left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' }) * multiplier;
+    });
+  };
+  const adminInDateRange = (value, range) => {
+    if (!range.from && !range.to) return true;
+    if (!value) return false;
+    const day = String(value).slice(0, 10);
+    return (!range.from || day >= range.from) && (!range.to || day <= range.to);
+  };
+  const adminFarmerFor = (farmerId) => {
+    const farmer = store.findFarmer(farmerId);
+    const account = store.list('users').find((user) => user.farmerId === farmerId || user.id === farmer?.userId);
+    if (!farmer && !account) return null;
+    return {
+      id: farmer?.id || account?.farmerId || account?.id || '',
+      name: farmer?.name || account?.name || '',
+      username: account?.username || '',
+      phone: farmer?.phone || account?.phone || '',
+      location: farmer?.location || account?.location || '',
+      role: account?.role || farmer?.role || 'FARMER',
+      createdAt: account?.createdAt || farmer?.createdAt || null
+    };
+  };
+  const adminFarmerSummaryFor = (farmerId) => {
+    const farmer = adminFarmerFor(farmerId);
+    return farmer ? { id: farmer.id, name: farmer.name } : null;
+  };
+  const adminFarmRecord = (farm) => {
+    const zones = store.scoped('zones', farm.id);
+    const farmer = adminFarmerSummaryFor(farm.farmerId);
+    return {
+      id: farm.id,
+      farmerId: farm.farmerId,
+      name: farm.name,
+      areaAcres: farm.areaAcres,
+      soilType: farm.soilType,
+      waterSource: farm.waterSource,
+      irrigationMethod: farm.irrigationMethod,
+      availableWaterLitres: farm.availableWaterLitres,
+      location: farm.location,
+      source: farm.source || 'UNKNOWN',
+      createdAt: farm.createdAt || null,
+      farmer,
+      zones: zones.map((zone) => ({
+        id: zone.id,
+        farmId: zone.farmId,
+        name: zone.name,
+        areaAcres: zone.areaAcres,
+        soilType: zone.soilType,
+        waterAvailability: zone.waterAvailability,
+        currentCrop: zone.currentCrop || '',
+        growthStage: zone.growthStage || '',
+        sensorId: zone.sensorId || null,
+        source: zone.source || 'UNKNOWN'
+      })),
+      soilTests: store.scoped('soilTests', farm.id).map((item) => ({
+        id: item.id, zoneId: item.zoneId || null, parameter: item.parameter, value: item.value,
+        unit: item.unit || '', date: item.date || null, source: item.source || 'UNKNOWN'
+      })),
+      seasons: store.scoped('seasons', farm.id).map((item) => ({
+        id: item.id, crop: item.crop, variety: item.variety || '', season: item.season,
+        year: item.year, areaAcres: item.areaAcres, yieldQuintal: item.yieldQuintal,
+        sellingPricePerQuintal: item.sellingPricePerQuintal, expenses: item.expenses || {},
+        plantedDate: item.plantedDate || null, harvestDate: item.harvestDate || null,
+        source: item.source || 'UNKNOWN'
+      })),
+      activeCrops: store.scoped('activeCrops', farm.id).map((item) => ({
+        id: item.id, zoneId: item.zoneId || null, crop: item.crop, variety: item.variety || '',
+        planted: item.planted || null, expectedHarvest: item.expectedHarvest || null,
+        growthStage: item.growthStage || '', status: item.status || '', source: item.source || 'UNKNOWN'
+      })),
+      activities: store.scoped('activities', farm.id).map((item) => ({
+        id: item.id, zoneId: item.zoneId || null, type: item.type, date: item.date,
+        quantity: item.quantity, unit: item.unit || '', notes: item.notes || '', source: item.source || 'UNKNOWN'
+      }))
+    };
+  };
+  const adminFarmSummary = (farm) => ({
+    id: farm.id,
+    farmerId: farm.farmerId,
+    name: farm.name,
+    areaAcres: farm.areaAcres,
+    soilType: farm.soilType,
+    waterSource: farm.waterSource,
+    irrigationMethod: farm.irrigationMethod,
+    availableWaterLitres: farm.availableWaterLitres,
+    location: farm.location,
+    source: farm.source || 'UNKNOWN',
+    createdAt: farm.createdAt || null,
+    farmer: adminFarmerSummaryFor(farm.farmerId),
+    zoneCount: store.scoped('zones', farm.id).length
+  });
+  const latestLiveReadingFor = (deviceId) => store.list('sensorReadings')
+    .filter((reading) => reading.deviceId === deviceId && reading.source === 'LIVE_SENSOR')
+    .sort((a, b) => String(b.recordedAt).localeCompare(String(a.recordedAt)))[0] || null;
+  const devicePresence = (device) => {
+    if (device.status === 'revoked') return { status: 'revoked', lastAuthenticatedAt: null };
+    const reading = latestLiveReadingFor(device.id);
+    if (!reading) return { status: 'unverified', lastAuthenticatedAt: null };
+    const age = Date.now() - new Date(reading.recordedAt).getTime();
+    return {
+      status: Number.isFinite(age) && age >= -5 * 60 * 1000 && age <= 15 * 60 * 1000 ? 'online' : 'offline',
+      lastAuthenticatedAt: reading.recordedAt
+    };
+  };
+  const adminDeviceRecord = (device) => {
+    const farm = store.findFarm(device.farmId);
+    const zone = store.list('zones').find((item) => item.id === device.zoneId && item.farmId === device.farmId);
+    const latestReading = store.list('sensorReadings')
+      .filter((reading) => reading.deviceId === device.id)
+      .sort((a, b) => String(b.recordedAt).localeCompare(String(a.recordedAt)))[0] || null;
+    const presence = devicePresence(device);
+    return {
+      id: device.id,
+      name: device.name || device.id,
+      farmId: device.farmId,
+      farmName: farm?.name || null,
+      farmer: adminFarmerSummaryFor(farm?.farmerId),
+      zoneId: zone?.id || null,
+      zoneName: zone?.name || null,
+      status: presence.status,
+      lastAuthenticatedAt: presence.lastAuthenticatedAt,
+      revokedAt: device.status === 'revoked' ? device.revokedAt || device.updatedAt || null : null,
+      latestReading: latestReading ? {
+        id: latestReading.id,
+        soilMoisturePct: latestReading.soilMoisturePct,
+        temperatureC: latestReading.temperatureC,
+        humidityPct: latestReading.humidityPct,
+        waterLevelPct: latestReading.waterLevelPct,
+        recordedAt: latestReading.recordedAt,
+        source: latestReading.source || 'UNKNOWN'
+      } : null,
+      credentialStatus: device.status === 'revoked' ? 'revoked' : device.tokenHash ? 'provisioned' : 'not-configured',
+      firmware: device.firmware || null,
+      source: device.source || 'UNKNOWN'
+    };
+  };
+  const adminReadingRecord = (reading) => {
+    const soilMoisturePct = reading.soilMoisturePct;
+    const temperatureC = reading.temperatureC;
+    const humidityPct = reading.humidityPct;
+    const waterLevelPct = reading.waterLevelPct;
+    const valid = (soilMoisturePct == null || (Number.isFinite(Number(soilMoisturePct)) && Number(soilMoisturePct) >= 0 && Number(soilMoisturePct) <= 100))
+      && (temperatureC == null || (Number.isFinite(Number(temperatureC)) && Number(temperatureC) >= -20 && Number(temperatureC) <= 70))
+      && (humidityPct == null || (Number.isFinite(Number(humidityPct)) && Number(humidityPct) >= 0 && Number(humidityPct) <= 100))
+      && (waterLevelPct == null || (Number.isFinite(Number(waterLevelPct)) && Number(waterLevelPct) >= 0 && Number(waterLevelPct) <= 100));
+    const farm = store.findFarm(reading.farmId);
+    const zone = store.list('zones').find((item) => item.id === reading.zoneId && item.farmId === reading.farmId);
+    return {
+      id: reading.id,
+      deviceId: reading.deviceId || null,
+      farmId: reading.farmId,
+      farmName: farm?.name || null,
+      farmer: adminFarmerSummaryFor(farm?.farmerId),
+      zoneId: reading.zoneId || null,
+      zoneName: zone?.name || null,
+      soilMoisturePct,
+      temperatureC,
+      humidityPct,
+      waterLevelPct,
+      waterFlowLpm: reading.waterFlowLpm,
+      recordedAt: reading.recordedAt,
+      source: reading.source || 'UNKNOWN',
+      validity: valid ? 'valid' : 'out-of-range'
+    };
+  };
+  const adminAlertRecord = (alert) => {
+    const farm = store.findFarm(alert.farmId);
+    const zone = store.list('zones').find((item) => item.id === alert.zoneId && item.farmId === alert.farmId);
+    return {
+      id: alert.id,
+      farmId: alert.farmId,
+      farmName: farm?.name || null,
+      farmer: adminFarmerSummaryFor(farm?.farmerId),
+      zoneId: zone?.id || null,
+      zoneName: zone?.name || null,
+      title: alert.title,
+      description: alert.message,
+      severity: alert.severity,
+      category: alert.category || '',
+      createdAt: alert.createdAt,
+      acknowledged: Boolean(alert.acknowledged),
+      acknowledgedAt: alert.acknowledgedAt || null,
+      source: alert.source || 'UNKNOWN'
+    };
+  };
+  const csvEscape = (value) => {
+    let text = value == null ? '' : String(value);
+    if (typeof value === 'string' && /^[\s\u0000]*[=+\-@]/.test(value)) text = `'${text}`;
+    return `"${text.replace(/"/g, '""')}"`;
+  };
+  const adminCsv = (res, filename, columns, rows) => {
+    const content = [columns.map(([, label]) => csvEscape(label)).join(','), ...rows.map((row) => columns.map(([key]) => csvEscape(row[key])).join(','))].join('\r\n');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(`\uFEFF${content}`);
+  };
+
   app.get('/api/admin/overview', auth, requireAdmin, wrap((_req, res) => {
     const farms = store.list('farms');
-    const readings = store.list('sensorReadings');
+    const readings = store.list('sensorReadings').sort((a, b) => String(b.recordedAt).localeCompare(String(a.recordedAt)));
     const devices = store.list('sensorDevices');
     const alerts = store.list('alerts');
     const decisions = store.list('decisions');
     const activeAlerts = alerts.filter((alert) => !alert.acknowledged);
     const highRiskFarms = new Set(activeAlerts.filter((alert) => alert.severity === 'critical').map((alert) => alert.farmId));
+    const presences = devices.map(devicePresence);
 
     ok(res, {
       role: 'ADMIN',
@@ -814,23 +1081,48 @@ export function createApp(customStore) {
         farms: farms.length,
         zones: store.list('zones').length,
         devices: devices.length,
-        onlineDevices: devices.filter((device) => device.status === 'online').length,
-        offlineDevices: devices.filter((device) => device.status === 'offline').length,
+        onlineDevices: presences.filter((device) => device.status === 'online').length,
+        offlineDevices: presences.filter((device) => device.status === 'offline').length,
+        unverifiedDevices: presences.filter((device) => device.status === 'unverified').length,
         revokedDevices: devices.filter((device) => device.status === 'revoked').length,
         activeAlerts: activeAlerts.length,
         highRiskFarms: highRiskFarms.size,
-        decisions: decisions.length
+        decisions: decisions.length,
+        activities: store.list('activities').length,
+        readings: readings.length
       },
-      farms: farms.map((farm) => ({
-        ...farm,
-        farmer: store.getFarmer(farm.farmerId),
-        zoneCount: store.scoped('zones', farm.id).length,
-        latestReading: store.scoped('sensorReadings', farm.id).sort((a, b) => String(b.recordedAt).localeCompare(String(a.recordedAt)))[0] || null
+      farms: farms.map((farm) => {
+        const latestReading = store.scoped('sensorReadings', farm.id).sort((a, b) => String(b.recordedAt).localeCompare(String(a.recordedAt)))[0];
+        return {
+          id: farm.id, farmerId: farm.farmerId, name: farm.name, areaAcres: farm.areaAcres,
+          soilType: farm.soilType, irrigationMethod: farm.irrigationMethod, location: farm.location,
+          source: farm.source || 'UNKNOWN', farmer: adminFarmerSummaryFor(farm.farmerId),
+          zoneCount: store.scoped('zones', farm.id).length,
+          latestReading: latestReading ? adminReadingRecord(latestReading) : null
+        };
+      }),
+      devices: devices.map(adminDeviceRecord),
+      alerts: alerts.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 12).map(adminAlertRecord),
+      decisions: decisions.slice(-12).reverse().map((decision) => ({
+        id: decision.id, farmId: decision.farmId, category: decision.category || '',
+        status: decision.status || '', crop: decision.crop || '', summary: decision.summary || '',
+        createdAt: decision.createdAt || null, source: decision.source || 'UNKNOWN',
+        farmer: adminFarmerSummaryFor(store.findFarm(decision.farmId)?.farmerId)
       })),
-      devices,
-      alerts: alerts.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 12),
-      decisions: decisions.slice(-12).reverse(),
-      dataMode: store.data.sourceMode
+      recentActivities: store.list('activities').slice().sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 10).map((activity) => {
+        const farm = store.findFarm(activity.farmId);
+        const zone = store.list('zones').find((item) => item.id === activity.zoneId && item.farmId === activity.farmId);
+        return {
+          id: activity.id, farmId: activity.farmId, farmName: farm?.name || null,
+          farmer: adminFarmerSummaryFor(farm?.farmerId), zoneId: zone?.id || null,
+          zoneName: zone?.name || null, type: activity.type, date: activity.date,
+          quantity: activity.quantity, unit: activity.unit || '', source: activity.source || 'UNKNOWN'
+        };
+      }),
+      recentReadings: readings.slice(0, 10).map(adminReadingRecord),
+      administrativeEvents: { available:false, items:[] },
+      dataMode: store.data.sourceMode || 'DEMO_DATA',
+      demoData: (store.data.sourceMode || 'DEMO_DATA') === 'DEMO_DATA'
     });
   }));
 
@@ -838,7 +1130,234 @@ export function createApp(customStore) {
     const device = store.getDeviceById(req.params.id);
     if (!device) return fail(res, 404, 'device_not_found', 'Sensor device not found');
     const updated = store.revokeDevice(req.params.id);
-    ok(res, updated);
+    ok(res, adminDeviceRecord(updated));
+  }));
+
+  app.get('/api/admin/farmers', auth, requireAdmin, wrap((req, res) => {
+    const search = adminQueryString(req.query.search, 'search', 120).toLowerCase();
+    const range = adminDateRange(req.query);
+    const farmers = store.list('farmers').map((farmer) => {
+      const profile = adminFarmerFor(farmer.id) || { id: farmer.id, name: farmer.name || '', username: '', phone: farmer.phone || '', location: farmer.location || '', role: 'FARMER', createdAt: farmer.createdAt || null };
+      return { ...profile, farmCount: store.list('farms').filter((farm) => farm.farmerId === farmer.id).length };
+    }).filter((farmer) => {
+      const searchable = `${farmer.name} ${farmer.username} ${farmer.phone}`.toLowerCase();
+      return (!search || searchable.includes(search)) && adminInDateRange(farmer.createdAt, range);
+    });
+    ok(res, adminPage(adminSort(farmers, req.query, ['name', 'username', 'createdAt', 'farmCount'], 'name'), req.query));
+  }));
+
+  app.get('/api/admin/farmers/:id', auth, requireAdmin, wrap((req, res) => {
+    const farmer = adminFarmerFor(req.params.id);
+    if (!farmer) return fail(res, 404, 'farmer_not_found', 'Farmer not found');
+    const account = store.list('users').find((user) => user.farmerId === req.params.id || user.id === store.findFarmer(req.params.id)?.userId);
+    ok(res, {
+      ...farmer,
+      account: account ? { createdAt: account.createdAt || null, role: account.role } : null,
+      farms: store.list('farms').filter((farm) => farm.farmerId === req.params.id).map(adminFarmRecord)
+    });
+  }));
+
+  app.get('/api/admin/farms', auth, requireAdmin, wrap((req, res) => {
+    const search = adminQueryString(req.query.search, 'search', 120).toLowerCase();
+    const farmerId = adminQueryString(req.query.farmerId, 'farmerId', 64);
+    const range = adminDateRange(req.query);
+    const farms = store.list('farms').map(adminFarmSummary).filter((farm) => {
+      const searchable = `${farm.name} ${farm.location}`.toLowerCase();
+      return (!search || searchable.includes(search))
+        && (!farmerId || farm.farmerId === farmerId)
+        && adminInDateRange(farm.createdAt, range);
+    });
+    ok(res, adminPage(adminSort(farms, req.query, ['name', 'location', 'areaAcres', 'createdAt'], 'name'), req.query));
+  }));
+
+  app.get('/api/admin/farms/:id', auth, requireAdmin, wrap((req, res) => {
+    const farm = store.findFarm(req.params.id);
+    if (!farm) return fail(res, 404, 'farm_not_found', 'Farm not found');
+    ok(res, adminFarmRecord(farm));
+  }));
+
+  app.get('/api/admin/devices', auth, requireAdmin, wrap((req, res) => {
+    const farmId = adminQueryString(req.query.farmId, 'farmId', 64);
+    const status = adminQueryString(req.query.status, 'status', 20);
+    if (status && !['online', 'offline', 'unverified', 'revoked'].includes(status)) {
+      return fail(res, 400, 'validation_error', 'status is not supported');
+    }
+    const devices = store.list('sensorDevices').map(adminDeviceRecord)
+      .filter((device) => (!farmId || device.farmId === farmId) && (!status || device.status === status))
+      .sort((a, b) => a.id.localeCompare(b.id));
+    ok(res, adminPage(devices, req.query));
+  }));
+
+  app.get('/api/admin/readings', auth, requireAdmin, wrap((req, res) => {
+    const farmId = adminQueryString(req.query.farmId, 'farmId', 64);
+    const zoneId = adminQueryString(req.query.zoneId, 'zoneId', 64);
+    const deviceId = adminQueryString(req.query.deviceId, 'deviceId', 64);
+    const sourceFilter = adminQueryString(req.query.source, 'source', 40);
+    const range = adminDateRange(req.query);
+    const readings = store.list('sensorReadings').map(adminReadingRecord)
+      .filter((reading) => (!farmId || reading.farmId === farmId)
+        && (!zoneId || reading.zoneId === zoneId)
+        && (!deviceId || reading.deviceId === deviceId)
+        && (!sourceFilter || reading.source === sourceFilter)
+        && adminInDateRange(reading.recordedAt, range))
+      .sort((a, b) => String(b.recordedAt).localeCompare(String(a.recordedAt)));
+    ok(res, adminPage(readings, req.query));
+  }));
+
+  app.get('/api/admin/alerts', auth, requireAdmin, wrap((req, res) => {
+    const search = adminQueryString(req.query.search, 'search', 120).toLowerCase();
+    const farmId = adminQueryString(req.query.farmId, 'farmId', 64);
+    const severity = adminQueryString(req.query.severity, 'severity', 20);
+    const status = adminQueryString(req.query.status, 'status', 20);
+    const range = adminDateRange(req.query);
+    if (severity && !['info', 'warning', 'critical'].includes(severity)) return fail(res, 400, 'validation_error', 'severity is not supported');
+    if (status && !['active', 'acknowledged'].includes(status)) return fail(res, 400, 'validation_error', 'status is not supported');
+    const alerts = store.list('alerts').map(adminAlertRecord)
+      .filter((alert) => (!search || `${alert.title} ${alert.description} ${alert.farmName || ''} ${alert.farmer?.name || ''}`.toLowerCase().includes(search))
+        && (!farmId || alert.farmId === farmId)
+        && (!severity || alert.severity === severity)
+        && (!status || (status === 'acknowledged') === alert.acknowledged)
+        && adminInDateRange(alert.createdAt, range))
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    ok(res, adminPage(alerts, req.query));
+  }));
+
+  app.get('/api/admin/decisions', auth, requireAdmin, wrap((req, res) => {
+    const farmId = adminQueryString(req.query.farmId, 'farmId', 64);
+    const range = adminDateRange(req.query);
+    const decisions = store.list('decisions').map((decision) => {
+      const farm = store.findFarm(decision.farmId);
+      return {
+        id: decision.id, farmId: decision.farmId, farmName: farm?.name || null,
+        farmer: adminFarmerSummaryFor(farm?.farmerId), category: decision.category || '',
+        status: decision.status || '', crop: decision.crop || '',
+        summary: decision.summary || '', question: decision.question || '',
+        createdAt: decision.createdAt || null, source: decision.source || 'UNKNOWN'
+      };
+    }).filter((decision) => (!farmId || decision.farmId === farmId) && adminInDateRange(decision.createdAt, range))
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    const scenarios = store.list('farms').filter((farm) => !farmId || farm.id === farmId).map((farm) => {
+      const input = {
+        farm,
+        seasons: store.scoped('seasons', farm.id),
+        soilTests: store.scoped('soilTests', farm.id),
+        zones: store.scoped('zones', farm.id),
+        weather: store.scoped('weather', farm.id).length ? store.scoped('weather', farm.id) : store.list('weather')
+      };
+      const recommendations = categorizedRecommendations(input);
+      return {
+        farmId: farm.id,
+        farmName: farm.name,
+        farmer: adminFarmerSummaryFor(farm.farmerId),
+        recommendations,
+        profit: profitAnalysis({ seasons: input.seasons, recommendation: recommendations[2] }),
+        supportingInputs: {
+          zones: input.zones.length,
+          soilTests: input.soilTests.length,
+          historicalSeasons: input.seasons.length,
+          recentActivities: store.scoped('activities', farm.id).length,
+          weatherSource: input.weather[0]?.source || 'UNAVAILABLE',
+          latestReadingSource: store.scoped('sensorReadings', farm.id).sort((a, b) => String(b.recordedAt).localeCompare(String(a.recordedAt)))[0]?.source || 'UNAVAILABLE'
+        }
+      };
+    });
+    ok(res, { ...adminPage(decisions, req.query), scenarios });
+  }));
+
+  app.get('/api/admin/weather', auth, requireAdmin, wrap((req, res) => {
+    const farmId = adminQueryString(req.query.farmId, 'farmId', 64);
+    const range = adminDateRange(req.query);
+    const farms = store.list('farms').filter((farm) => !farmId || farm.id === farmId);
+    const records = store.list('weather').filter((item) => (!farmId || !item.farmId || item.farmId === farmId)
+      && adminInDateRange(item.date || item.updatedAt || item.recordedAt, range)).map((item) => {
+      const associatedFarm = item.farmId ? store.findFarm(item.farmId) : null;
+      const associatedZone = item.zoneId ? store.list('zones').find((zone) => zone.id === item.zoneId && zone.farmId === item.farmId) : null;
+      return {
+        ...item,
+        farmId: associatedFarm?.id || null,
+        farmName: associatedFarm?.name || null,
+        farmer: adminFarmerSummaryFor(associatedFarm?.farmerId),
+        zoneId: associatedZone?.id || null,
+        zoneName: associatedZone?.name || null
+      };
+    });
+    const risks = farms.map((farm) => {
+      const weather = store.scoped('weather', farm.id).length ? store.scoped('weather', farm.id) : store.list('weather');
+      const readings = store.scoped('sensorReadings', farm.id);
+      const zones = store.scoped('zones', farm.id);
+      const activeCrops = store.scoped('activeCrops', farm.id);
+      const budget = waterBudget({ farm, zones, activeCrops, sensorReadings: readings, weather });
+      return {
+        farmId:farm.id,
+        farmName:farm.name,
+        farmer:adminFarmerSummaryFor(farm.farmerId),
+        zones:zones.map((zone) => ({ id:zone.id, name:zone.name })),
+        assessments:climateRisks({ farm, zones, sensorReadings:readings, weather, water:budget })
+      };
+    });
+    const provenance = getWeather(store.list('weather'));
+    ok(res, {
+      ...adminPage(records.sort((a, b) => String(b.date || b.updatedAt || '').localeCompare(String(a.date || a.updatedAt || ''))), req.query),
+      risks,
+      integrationMode:provenance.mode,
+      note:provenance.note
+    });
+  }));
+
+  app.get('/api/admin/health', auth, requireAdmin, wrap((_req, res) => {
+    const weather = getWeather(store.list('weather'));
+    ok(res, {
+      service: 'agcro-api',
+      api: 'available',
+      version: '1.1.0-secure-foundation',
+      storageMode: store.storageMode,
+      databaseAdapter: store.databaseConfigured ? 'configured-but-not-integrated' : 'not-configured',
+      integrations: {
+        weather: weather.mode === 'SIMULATED_WEATHER' ? 'simulated' : 'configured-not-verified',
+        ai: process.env.NEUGEN_API_URL && process.env.NEUGEN_API_KEY ? 'configured-not-verified' : 'rule-based-fallback',
+        sensorIngestion: 'available; device presence requires authenticated LIVE_SENSOR readings',
+        administrativeAudit: 'not-recorded-in-current-store'
+      },
+      generatedAt: new Date().toISOString()
+    });
+  }));
+
+  app.get('/api/admin/reports/:type.csv', auth, requireAdmin, wrap((req, res) => {
+    const type = req.params.type;
+    const allowed = ['farmers', 'farms', 'devices', 'readings', 'alerts', 'activities'];
+    if (!allowed.includes(type)) return fail(res, 404, 'report_not_found', 'Report type not found');
+    const farmId = adminQueryString(req.query.farmId, 'farmId', 64);
+    const farmerId = adminQueryString(req.query.farmerId, 'farmerId', 64);
+    const range = adminDateRange(req.query);
+    let rows;
+    let columns;
+    if (type === 'farmers') {
+      rows = store.list('farmers').map((farmer) => adminFarmerFor(farmer.id)).filter((farmer) => farmer && (!farmerId || farmer.id === farmerId) && adminInDateRange(farmer.createdAt, range));
+      columns = [['id', 'Farmer ID'], ['name', 'Name'], ['username', 'Username'], ['phone', 'Phone'], ['location', 'Location'], ['createdAt', 'Registered at']];
+    } else if (type === 'farms') {
+      rows = store.list('farms').map(adminFarmRecord).filter((farm) => (!farmId || farm.id === farmId) && (!farmerId || farm.farmerId === farmerId) && adminInDateRange(farm.createdAt, range))
+        .map((farm) => ({ ...farm, farmerName: farm.farmer?.name || '', zoneCount: farm.zones.length }));
+      columns = [['id', 'Farm ID'], ['name', 'Farm'], ['location', 'Location'], ['farmerName', 'Farmer'], ['areaAcres', 'Area acres'], ['soilType', 'Soil type'], ['irrigationMethod', 'Irrigation'], ['zoneCount', 'Zones'], ['source', 'Source']];
+    } else if (type === 'devices') {
+      rows = store.list('sensorDevices').map(adminDeviceRecord).filter((device) => (!farmId || device.farmId === farmId) && (!farmerId || device.farmer?.id === farmerId) && adminInDateRange(device.lastAuthenticatedAt, range))
+        .map((device) => ({ ...device, farmerName: device.farmer?.name || '', lastAuthenticatedAt: device.lastAuthenticatedAt || '' }));
+      columns = [['id', 'Device ID'], ['name', 'Name'], ['farmerName', 'Farmer'], ['farmName', 'Farm'], ['zoneName', 'Zone'], ['status', 'Presence status'], ['lastAuthenticatedAt', 'Last authenticated reading'], ['revokedAt', 'Revoked at'], ['credentialStatus', 'Credential status']];
+    } else if (type === 'readings') {
+      rows = store.list('sensorReadings').map(adminReadingRecord).filter((reading) => (!farmId || reading.farmId === farmId) && (!farmerId || reading.farmer?.id === farmerId) && adminInDateRange(reading.recordedAt, range));
+      columns = [['id', 'Reading ID'], ['deviceId', 'Device ID'], ['farmName', 'Farm'], ['zoneName', 'Zone'], ['soilMoisturePct', 'Soil moisture %'], ['temperatureC', 'Temperature C'], ['humidityPct', 'Humidity %'], ['recordedAt', 'Recorded at'], ['source', 'Source'], ['validity', 'Validity']];
+    } else if (type === 'alerts') {
+      rows = store.list('alerts').map(adminAlertRecord).filter((alert) => (!farmId || alert.farmId === farmId) && (!farmerId || alert.farmer?.id === farmerId) && adminInDateRange(alert.createdAt, range))
+        .map((alert) => ({ ...alert, farmerName: alert.farmer?.name || '', acknowledged: alert.acknowledged ? 'yes' : 'no' }));
+      columns = [['id', 'Alert ID'], ['title', 'Title'], ['description', 'Description'], ['severity', 'Severity'], ['farmerName', 'Farmer'], ['farmName', 'Farm'], ['zoneName', 'Zone'], ['createdAt', 'Created at'], ['acknowledged', 'Acknowledged'], ['source', 'Source']];
+    } else {
+      rows = store.list('activities').filter((activity) => (!farmId || activity.farmId === farmId) && adminInDateRange(activity.date, range)).map((activity) => {
+        const farm = store.findFarm(activity.farmId);
+        const zone = store.list('zones').find((item) => item.id === activity.zoneId && item.farmId === activity.farmId);
+        return { id: activity.id, farmId: activity.farmId, farmName: farm?.name || '', farmerId: farm?.farmerId || '', farmerName: adminFarmerFor(farm?.farmerId)?.name || '', zoneName: zone?.name || '', date: activity.date, type: activity.type, quantity: activity.quantity, unit: activity.unit || '', notes: activity.notes || '', source: activity.source || 'UNKNOWN' };
+      }).filter((activity) => !farmerId || activity.farmerId === farmerId);
+      columns = [['id', 'Activity ID'], ['farmerName', 'Farmer'], ['farmName', 'Farm'], ['zoneName', 'Zone'], ['date', 'Date'], ['type', 'Activity'], ['quantity', 'Quantity'], ['unit', 'Unit'], ['notes', 'Notes'], ['source', 'Source']];
+    }
+    adminCsv(res, `agcro-${type}-report.csv`, columns, rows);
   }));
 
   app.get('/admin', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));

@@ -63,8 +63,9 @@ export function createStore() {
   };
 
   const revokeDevice = (deviceId) => {
-    const updated = update('sensorDevices', deviceId, { status: 'revoked' });
-    return updated;
+    const device = getDeviceById(deviceId);
+    if (!device || device.status === 'revoked') return device;
+    return update('sensorDevices', deviceId, { status: 'revoked', revokedAt: now() });
   };
 
   const scoped = (key, farmId) => list(key).filter((item) => !farmId || item.farmId === farmId);
