@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="mr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="description" content="AGCRO — तुमचा बुद्धिमान शेती साथी | Your Intelligent Farming Companion" />
+  <meta name="theme-color" content="#245C3A" />
+  <title>AGCRO · Smart Agriculture</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+Devanagari:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar" aria-label="AGCRO navigation">
+      <div class="brand-lockup">
+        <div class="brand-mark" aria-hidden="true">A</div>
+        <div><div class="brand-name">AGCRO</div><div class="brand-sub" data-i18n="brand.sub">स्मार्ट शेती निर्णय आणि नफा प्लॅटफॉर्म</div></div>
+      </div>
+      <div class="sidebar-tagline" data-i18n="brand.tagline">तुमचा बुद्धिमान शेती साथी</div>
+      <div class="farm-switcher">
+        <label for="farm-select" data-i18n="header.currentFarm">सध्याचे शेत</label>
+        <select id="farm-select" aria-label="Current farm"></select>
+        <div class="farm-location" id="farm-location"><span aria-hidden="true">⌖</span><span>—</span></div>
+      </div>
+      <nav class="nav-list" id="primary-nav" aria-label="Primary navigation">
+        <a href="#dashboard" data-route="dashboard" class="nav-link active"><span class="nav-icon" aria-hidden="true">⌂</span><span data-i18n="nav.today">आजचे काम</span></a>
+        <a href="#memory" data-route="memory" class="nav-link"><span class="nav-icon" aria-hidden="true">▤</span><span data-i18n="nav.memory">शेतीचा इतिहास</span></a>
+        <a href="#recommendations" data-route="recommendations" class="nav-link"><span class="nav-icon" aria-hidden="true">✦</span><span data-i18n="nav.recommendations">पीक शिफारस</span></a>
+        <a href="#monitor" data-route="monitor" class="nav-link"><span class="nav-icon" aria-hidden="true">◌</span><span data-i18n="nav.monitor">पाणी व्यवस्थापन</span></a>
+        <a href="#profit" data-route="profit" class="nav-link"><span class="nav-icon" aria-hidden="true">↗</span><span data-i18n="nav.profit">नफा विश्लेषण</span></a>
+        <a href="#market" data-route="market" class="nav-link"><span class="nav-icon" aria-hidden="true">⌁</span><span data-i18n="nav.market">बाजार आणि योजना</span></a>
+        <a href="#assistant" data-route="assistant" class="nav-link"><span class="nav-icon" aria-hidden="true">✧</span><span data-i18n="nav.assistant">AI शेती सहाय्यक</span></a>
+        <a href="#farms" data-route="farms" class="nav-link"><span class="nav-icon" aria-hidden="true">▦</span><span data-i18n="nav.farms">शेती व्यवस्थापन</span></a>
+        <a href="#profile" data-route="profile" class="nav-link"><span class="nav-icon" aria-hidden="true">◎</span><span data-i18n="nav.profile">प्रोफाइल</span></a>
+      </nav>
+      <div class="sidebar-bottom">
+        <a href="/admin" class="admin-link"><span data-i18n="nav.admin">अॅडमिन पॅनेल</span> ↗</a>
+        <div class="sidebar-note" data-i18n="common.localAdvice">महत्त्वाचा निर्णय स्थानिक कृषी तज्ज्ञांच्या सल्ल्याने घ्या.</div>
+      </div>
+    </aside>
+    <main class="main-content">
+      <header class="topbar">
+        <button class="icon-button mobile-menu" id="menu-button" data-i18n-aria="header.openNavigation" aria-label="नेव्हिगेशन उघडा" aria-expanded="false" aria-controls="primary-nav">☰</button>
+        <div class="breadcrumbs"><span>AGCRO</span><span class="crumb-divider">/</span><strong id="page-kicker">आजचे काम</strong></div>
+        <div class="topbar-actions">
+          <div class="language-switcher" role="group" data-i18n-aria="language.label" aria-label="भाषा">
+            <button type="button" class="language-button" data-language="mr">मराठी</button>
+            <button type="button" class="language-button" data-language="en">English</button>
+            <button type="button" class="language-button" data-language="hi">हिन्दी</button>
+          </div>
+          <span class="last-updated" id="last-updated">अपडेट होत आहे…</span>
+          <button class="icon-button notification-button" id="notification-button" data-i18n-aria="header.alerts" aria-label="सूचना उघडा">◔<span class="notification-dot" id="notification-dot"></span></button>
+          <button class="avatar-button" id="profile-button" data-i18n-aria="header.profile" aria-label="शेतकरी प्रोफाइल">RP</button>
+        </div>
+      </header>
+      <div id="app" class="page-wrap" aria-live="polite"><div class="loading-state"><div class="spinner"></div><p data-i18n="common.loading">शेतीची माहिती लोड होत आहे…</p></div></div>
+    </main>
+  </div>
+  <nav class="mobile-bottom-nav" id="mobile-bottom-nav" aria-label="Mobile navigation">
+    <a href="#dashboard" data-route="dashboard"><span aria-hidden="true">⌂</span><small data-i18n="nav.today">आजचे काम</small></a>
+    <a href="#recommendations" data-route="recommendations"><span aria-hidden="true">✦</span><small data-i18n="nav.recommendations">पीक शिफारस</small></a>
+    <a href="#monitor" data-route="monitor"><span aria-hidden="true">◌</span><small data-i18n="nav.monitor">पाणी व्यवस्थापन</small></a>
+    <a href="#assistant" data-route="assistant"><span aria-hidden="true">✧</span><small data-i18n="nav.assistant">AI सहाय्यक</small></a>
+    <a href="#farms" data-route="farms"><span aria-hidden="true">▦</span><small data-i18n="nav.farms">शेती</small></a>
+  </nav>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <dialog id="action-dialog" class="dialog"><div class="dialog-card"><button class="dialog-close" id="dialog-close" data-i18n-aria="common.close" aria-label="बंद करा">×</button><div id="dialog-content"></div></div></dialog>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
