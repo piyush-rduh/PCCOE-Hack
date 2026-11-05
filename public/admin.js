@@ -453,13 +453,14 @@
           )), 'No decision records match the filters.')),
         (pageData.scenarios || []).map((scenario) => h('section', { className:'card admin-scenario', key:scenario.farmId },
           h('h2', null, `Estimates · ${scenario.farmName} · ${showText(scenario.farmer?.name)}`),
-          h('p', { className:'card-description' }, `Actual recorded historical profit: ${scenario.profit.actual.profit.toLocaleString('en-IN')} · ${scenario.profit.actual.seasons} historical seasons. Future figures are estimates only.`),
+          h('p', { className:'card-description' }, `Recorded historical profit: ${scenario.profit.actual.profit == null ? 'Unavailable' : scenario.profit.actual.profit.toLocaleString('en-IN')} · ${scenario.profit.actual.seasons} actual seasons. Future figures are estimates only.`),
+          h('p', { className:'metric-sub' }, `Engine ${showText(scenario.dataQuality?.calculationVersion)} · ${scenario.dataQuality?.missingInputs?.length || 0} missing inputs · ${showText(scenario.dataQuality?.generatedAt)}`),
           h('p', { className:'metric-sub' }, `Current context available (not persisted as original decision inputs): ${scenario.supportingInputs.zones} zones · ${scenario.supportingInputs.soilTests} soil tests · ${scenario.supportingInputs.historicalSeasons} historical seasons · ${scenario.supportingInputs.recentActivities} activities · Weather: ${showText(scenario.supportingInputs.weatherSource)} · Sensor: ${showText(scenario.supportingInputs.latestReadingSource)}`),
           h('div', { className:'grid admin-scenario-grid' }, scenario.recommendations.map((recommendation) => h('article', { className:'metric-card', key:recommendation.category },
-            h('div', { className:'metric-label' }, `${recommendation.category} · ${recommendation.crop}`),
-            h('div', { className:'metric-value' }, `${recommendation.estimatedProfitPerAcre.toLocaleString('en-IN')} / acre`),
-            h('div', { className:'metric-sub' }, `Confidence: ${recommendation.confidence} · Estimated, not actual harvest`),
-            h('p', null, (recommendation.assumptions || []).join(' '))
+            h('div', { className:'metric-label' }, `${recommendation.category} · ${recommendation.crop || 'No crop ranked'}`),
+            h('div', { className:'metric-value' }, recommendation.available ? 'Reference-backed estimate' : 'Unavailable'),
+            h('div', { className:'metric-sub' }, `Confidence: ${recommendation.confidence?.level || 'low'} · No unverified values shown`),
+            h('p', null, (recommendation.missingInputs || []).join(' · '))
           ))),
           h('p', { className:'notice' }, `Profit assumptions: ${(scenario.profit.future.assumptions || []).join(' ')}`)
         ))
@@ -488,7 +489,7 @@
             h('td', null, (item.zones || []).map((zone) => zone.name).join(', ') || 'No zones'),
             h('td', null, `${showText(drought?.level)} (${showText(drought?.score)}) · Affected: ${(drought?.affectedZones || []).join(', ') || 'None'}`),
             h('td', null, `${showText(flood?.level)} (${showText(flood?.score)}) · Affected: ${(flood?.affectedZones || []).join(', ') || 'None'}`),
-            h('td', null, `${showText(drought?.confidence)} / ${showText(flood?.confidence)}`)
+            h('td', null, `${showText(drought?.confidence?.level)} / ${showText(flood?.confidence?.level)}`)
           )];
         }), 'No farm risk assessments are available.')
       );

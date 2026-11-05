@@ -1,5 +1,19 @@
 # AGCRO MVP delivery checklist
 
+## Phase 4: Agriculture decision engine (Implemented with reference-data gates)
+
+- [x] Make the Python CLI the primary calculation engine behind the existing Express API; validate JSON input/output and bound process time/output.
+- [x] Keep missing values unknown, identify stale sensor data, distinguish demo finances from actual records, and return confidence as evidence completeness rather than probability.
+- [x] Preserve the legacy Land Power prototype weights with explanations and explicit non-standardized/provisional status.
+- [x] Add unit-explicit water-budget calculations, input completeness checks, zone allocation, and farmer-confirmed-only irrigation guidance.
+- [x] Add crop-sequence summaries, historical financial calculations with expense-completeness confirmation, and unscored drought/waterlogging assessments.
+- [x] Update farmer and admin API/UI consumers and English/Marathi/Hindi fallback notices without changing auth or storage backends.
+- [x] Add Python/Node integration and regression tests; document architecture, assumptions, and APIs.
+- [ ] Populate `python/agronomic_references.json` with locally reviewed authoritative values and scoring/essential-constraint rules before enabling crop ranking, exact irrigation quantities, or risk scores.
+- [ ] Expose farmer-entered planning-period effective rainfall, crop requirements, irrigation efficiency, and explicit low/medium/high financial scenarios through validated UI/API inputs.
+- [ ] Present Farm Memory's soil-history trends and admin decision data-quality details in dedicated UI views.
+- [ ] Translate all variable engine explanations and remaining decision details (not only standard UI notices/labels) in English, Marathi, and Hindi.
+
 ## Phase 1: Security and Backend Foundation (Delivered)
 
 - [x] **Authentication:**
@@ -54,13 +68,13 @@
 - [x] Show provenance labels for live sensor, external API, farmer-entered, and simulated demonstration data, plus last-updated timestamps.
 - [x] Keep actual planted crops separate from recommendations; accepting a recommendation must never silently change the planted crop.
 - [x] Store and display farm memory covering seasons, costs, yields, soil tests, irrigation, activities, harvests, and profitability.
-- [x] Compute Land Power as a transparent prototype indicator with factor explanations, missing data, trend, confidence, and an explicit non-standardized disclaimer.
-- [x] Provide restoration-oriented, balanced-productivity, and profit-oriented crop recommendations with variety, season, water, yield range, cost, revenue, profit, reasons, risks, confidence, and assumptions.
+- [x] Compute Land Power as a transparent prototype indicator with provisional factor explanations, missing data, evidence completeness, and an explicit non-standardized disclaimer.
+- [ ] Provide reviewed restoration, balanced, and profit-oriented crop rankings; currently withheld until validated local references and essential constraints are configured.
 - [x] Provide zone-level records and zone-aware readings/recommendation context.
-- [x] Provide water budget as available water minus projected demand, with rainfall contribution, deficit/surplus, allocation, assumptions, and action.
-- [x] Provide irrigation advice using crop, stage, moisture, recent irrigation, forecast, and water availability; do not operate pumps automatically.
-- [x] Provide drought and flood/waterlogging risk cards with reasons, affected zones, consequences, preventive actions, and confidence.
-- [x] Provide actual historical profit plus conservative, expected, and optimistic future scenarios with assumptions and uncertainty.
+- [ ] Provide a complete water budget when crop-period demand, effective rainfall, area, available water, and efficiency are known; otherwise show missing values.
+- [ ] Provide precise irrigation depth/volume only when fresh measurements and reviewed crop parameters are present; never operate pumps automatically.
+- [ ] Provide drought/flood preparedness context; calibrated risk scores remain disabled until a validated regional method is reviewed.
+- [ ] Provide actual historical profit only when full expenses are confirmed; future low/medium/high outcomes await explicit scenario inputs.
 - [x] Label market and government content as demonstration/source-based unless a verified integration is configured.
 - [x] Generate and acknowledge alerts for moisture, weather, water, crop stress, sensors, harvest, and activities.
 

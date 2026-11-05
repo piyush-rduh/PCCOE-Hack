@@ -1,26 +1,18 @@
 # AGCRO architecture
 
 ```text
-Farmer browser (responsive web) ──┐
-                                  ├── Express REST API ── Repository ── JSON demo store / managed relational DB
-Admin browser (React surface) ────┘             │
-                                               ├── JS-compatible deterministic decision engine
-                                               ├── Python decision engine CLI/service boundary
-                                               ├── Weather adapter (Open-Meteo boundary)
-                                               └── NeuGen adapter (verified endpoint only; fallback is labelled)
-ESP32 + SHT31 + capacitive sensor ─────────────┘
+Farmer browser ─────┐
+                    ├─ Authenticated Express API ── Existing JSON/demo store
+Admin browser ──────┘               │
+                                    └─ Fixed Python decision-engine CLI
+                                       (JSON stdin/stdout; bounded timeout)
+
+Authenticated ESP32 telemetry ──────┘
+Weather/market adapters ─────────────┘ (source-labelled; not assumed live)
 ```
 
-The API is the shared contract for farmer and admin surfaces. The decision engine consumes structured records and emits Land Power, recommendation, water-budget, irrigation, climate-risk, and profit outputs. Source labels travel with readings and cards so simulated, farmer-entered, external, and live data cannot be confused.
+Node.js and Express remain the application backend, authorization boundary, storage adapter, and REST API. Farm ownership is verified before farm data is passed to the calculation process. The Python engine is independent of the development JSON store and consumes only the structured records in the request. JavaScript does not duplicate agricultural calculations.
 
-# Hackathon demo script
+The process boundary accepts JSON data only. It has a fixed script path, no shell, a response contract check, a finite timeout, bounded output, and a generic public error response. `AGCRO_PYTHON` selects the local Python executable; `AGCRO_DECISION_TIMEOUT_MS` adjusts the bounded process timeout. See [DECISION_ENGINE.md](./DECISION_ENGINE.md) for the contract and [AGRONOMIC_ASSUMPTIONS.md](./AGRONOMIC_ASSUMPTIONS.md) for the formula audit.
 
-1. Start at **Today** and ask “What should I do today?” Show the water deficit, current chickpea stage, and the action to review allocation before irrigating.
-2. Open **Farm memory**. Show season history, actual revenue/profit, missing N/P/K soil data, and the Land Power confidence explanation.
-3. Open **Crop decisions**. Compare restoration, balanced, and profit lenses. Accept one for planning and point out that the planted crop did not change.
-4. Open **Monitor & water**. Show the water formula, zone allocations, sensor status, irrigation recommendation, and drought/flood preparedness cards.
-5. Add a sensor reading through the form. Refresh and show that the reading is stored, source-labelled, and reused by irrigation advice.
-6. Open **Profit intelligence**. Contrast actual historical profit with conservative/expected/optimistic scenarios and state the assumptions.
-7. Ask the assistant to explain the water deficit. Highlight that the fallback explains structured results and is not claimed to be NeuGen.
-8. Open **Admin console**. Show farmers, zones, devices, active alerts, decisions, and the read-only role boundary.
-9. Close with the trust statement: AGCRO is a decision-support layer; it does not silently control pumps, invent live data, or guarantee income.
+The current sample store is explicitly `DEMO_DATA`. Synthetic financial history is separated from actual farmer finances. Crop rankings, water requirements, precise irrigation quantities, and drought/flood scores remain unavailable until reviewed references and required measurements are integrated. Existing authentication, localized farmer website, admin dashboard, and development storage remain in place. No MySQL connection is introduced.

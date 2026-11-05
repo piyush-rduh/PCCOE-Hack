@@ -1,4 +1,4 @@
-# AGCRO Setup & Security Foundation (Phase 1)
+# AGCRO Setup
 
 ## Quick Start
 
@@ -48,7 +48,9 @@ Copy `.env.example` to `.env` and configure as required:
 | `JWT_SECRET` | *(built-in dev fallback)* | Cryptographic secret for signing JWT tokens. **Must be overridden with a strong 256-bit secret in production.** |
 | `JWT_EXPIRES_IN` | `24h` | Token validity window (e.g., `24h`, `7d`). |
 | `AGCRO_DATA_FILE` | *(in-memory fallback)* | Path to persist writable JSON storage (e.g., `./data/agcro-store.json`). |
-| `DATABASE_URL` | *(none)* | Optional MySQL-compatible connection string for the managed database adapter. |
+| `AGCRO_PYTHON` | `python` | Python executable used by the decision engine. |
+| `AGCRO_DECISION_TIMEOUT_MS` | `4000` | Decision-engine process timeout, bounded to 100–10,000 ms. |
+| `DATABASE_URL` | *(none)* | Reserved for a future adapter; this application does not connect to MySQL. |
 | `OPEN_METEO_BASE_URL` | Open-Meteo URL | External weather API endpoint. |
 | `NEUGEN_API_URL` | *(none)* | NeuGen AI endpoint. |
 | `NEUGEN_API_KEY` | *(none)* | NeuGen AI API key. |

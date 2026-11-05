@@ -1,10 +1,18 @@
-# AGCRO API (Phase 1 Security & Backend Foundation)
+# AGCRO API
 
 The API is served by `server.js` on port 3000. All responses use consistent formats:
 - Success responses: `{ "data": <payload>, "generatedAt": "<timestamp>" }`
 - Error responses: `{ "error": "<code>", "message": "<description>" }`
 
 The in-memory demo repository uses `sample-data/demo.json`; set `AGCRO_DATA_FILE` for a writable JSON store. The relational schema contract is in `schema/migrations/001_init.sql`.
+
+## Agriculture decision engine
+
+The authenticated farm bundle and decision endpoints use the Python primary engine through a fixed JSON subprocess contract. Responses include `status`, `result`, `reasons`, `assumptions`, `missingInputs`, a non-probabilistic `confidence` evidence-completeness measure, `dataSources`, `calculationVersion`, and `generatedAt`. Module outputs retain those fields plus their module-specific result.
+
+The engine process is fixed to `python/decision_engine.py`; request data is never executed as code. Configure `AGCRO_PYTHON` if the `python` executable is not on `PATH`. The process timeout defaults to 4 seconds (`AGCRO_DECISION_TIMEOUT_MS`, bounded to 100–10,000 ms). An unavailable, timed-out, or invalid engine response returns `503 decision_engine_unavailable`; invalid calculation input returns `422 decision_input_invalid`. Internal Python errors are not returned.
+
+Missing measurements remain null/unknown. A water budget requires an explicit planning period, crop water depth, effective rainfall, cultivated area, and available water; gross irrigation also requires a supplied efficiency. Crop recommendations are withheld until reviewed regional references and essential-constraint rules are configured. Drought and flood scores are currently unassessed. Future profit estimates require explicit scenario inputs. The existing development store is retained; no MySQL dependency or production database connection is introduced.
 
 ---
 
@@ -33,16 +41,16 @@ All endpoints below require `Authorization: Bearer <token>`.
 | POST | `/api/zones` | FARMER (Owner) / ADMIN | Create a zone for owned farm |
 | PUT | `/api/zones/:id` | FARMER (Owner) / ADMIN | Update an existing zone |
 | GET | `/api/dashboard?farmId=...` | FARMER (Owner) / ADMIN | Complete farmer decision bundle |
-| GET | `/api/recommendations?farmId=...` | FARMER (Owner) / ADMIN | Three recommendation planning lenses |
+| GET | `/api/recommendations?farmId=...` | FARMER (Owner) / ADMIN | Three planning lenses; crops remain unranked until reviewed regional references are configured |
 | POST | `/api/recommendations/:crop/decision` | FARMER (Owner) / ADMIN | Accept/reject/defer a recommendation |
-| GET | `/api/water-budget?farmId=...` | FARMER (Owner) / ADMIN | Available minus projected irrigation requirement |
-| GET | `/api/irrigation-advice?farmId=...` | FARMER (Owner) / ADMIN | Moisture/weather/stage irrigation guidance |
-| GET | `/api/climate-risks?farmId=...` | FARMER (Owner) / ADMIN | Drought and flood risk assessments |
-| GET | `/api/profit-analysis?farmId=...` | FARMER (Owner) / ADMIN | Historical and projected profit scenarios |
+| GET | `/api/water-budget?farmId=...` | FARMER (Owner) / ADMIN | Transparent planning-period water balance; missing inputs remain unavailable |
+| GET | `/api/irrigation-advice?farmId=...` | FARMER (Owner) / ADMIN | Moisture freshness and reviewed-parameter checks; no automatic pump control |
+| GET | `/api/climate-risks?farmId=...` | FARMER (Owner) / ADMIN | Drought/waterlogging observations and precautions; no unvalidated risk scores |
+| GET | `/api/profit-analysis?farmId=...` | FARMER (Owner) / ADMIN | Recorded results separated from demo data; future estimates only with explicit scenarios |
 | GET | `/api/weather?farmId=...` | FARMER (Owner) / ADMIN | Weather observations and forecast |
 | POST | `/api/activities` | FARMER (Owner) / ADMIN | Record field activity (validated date & safe type) |
 | POST | `/api/soil-tests` | FARMER (Owner) / ADMIN | Record soil parameter test |
-| POST | `/api/harvests` | FARMER (Owner) / ADMIN | Record completed crop season and financial figures |
+| POST | `/api/harvests` | FARMER (Owner) / ADMIN | Record completed crop season; `expensesComplete: true` confirms full itemized costs before net profit is calculated |
 | GET | `/api/farms/:id/readings/latest` | FARMER (Owner) / ADMIN | Latest sensor readings and stale telemetry flags |
 | GET | `/api/alerts?farmId=...` | FARMER (Owner) / ADMIN | Active alerts for owned farm |
 | POST | `/api/alerts/:id/acknowledge` | FARMER (Owner) / ADMIN | Acknowledge alert on owned farm |

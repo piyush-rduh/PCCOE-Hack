@@ -13,14 +13,9 @@ import {
   requireAdmin
 } from './src/auth.js';
 import {
-  buildAlerts,
-  categorizedRecommendations,
-  climateRisks,
-  irrigationAdvice,
-  landPower,
-  profitAnalysis,
-  waterBudget
+  buildAlerts
 } from './src/decision-engine.js';
+import { calculateDecisionEngine } from './src/decision-service.js';
 import { dataBadge, getWeather, neuGenExplain } from './src/integrations.js';
 import {
   activityPayload,
@@ -171,30 +166,30 @@ export function createApp(customStore) {
     const zones = store.scoped('zones', farmId);
     const activeCrops = store.scoped('activeCrops', farmId);
     const activities = store.scoped('activities', farmId);
-    const weather = store.scoped('weather', farmId).length ? store.scoped('weather', farmId) : store.list('weather');
+    const decisionWeather = store.scoped('weather', farmId);
+    const weather = decisionWeather.length ? decisionWeather : store.list('weather');
     const sensorReadings = store.scoped('sensorReadings', farmId).sort((a, b) => String(b.recordedAt).localeCompare(String(a.recordedAt)));
     const sensorDevices = store.scoped('sensorDevices', farmId);
-    const land = landPower({ farm, seasons, soilTests, zones, activities });
-    const recommendations = categorizedRecommendations({ farm, seasons, soilTests, zones, weather });
-    const water = waterBudget({ farm, zones, activeCrops, sensorReadings, weather });
-    const irrigation = irrigationAdvice({
+    const calculation = calculateDecisionEngine({
       farm,
+      seasons,
+      soilTests,
+      zones,
       activeCrops,
-      soilTests: [
-        ...soilTests,
-        ...sensorReadings.map((reading) => ({
-          parameter: 'Moisture',
-          value: reading.soilMoisturePct,
-          date: reading.recordedAt,
-          source: reading.source
-        }))
-      ],
+      sensorReadings,
       activities,
-      weather
+      weather: decisionWeather,
+      dataMode: store.data.sourceMode || 'UNKNOWN'
     });
-    const risks = climateRisks({ farm, zones, sensorReadings, weather, water });
-    const profit = profitAnalysis({ seasons, recommendation: recommendations[2] });
-    buildAlerts({ farm, water, risks, irrigation, activeCrops, sensorDevices, sensorReadings }).forEach((alert) => store.addAlert(alert));
+    const {
+      landPower: land,
+      recommendations,
+      waterBudget: water,
+      irrigation,
+      risks,
+      profit
+    } = calculation.result;
+    buildAlerts({ farm, water, risks, irrigation, activeCrops, sensorDevices }).forEach((alert) => store.addAlert(alert));
     return {
       farm,
       farmer: store.getFarmer(farm.farmerId),
@@ -214,6 +209,15 @@ export function createApp(customStore) {
       irrigation,
       risks,
       profit,
+      farmMemory: calculation.result.farmMemory,
+      decisionEngine: {
+        status: calculation.status,
+        calculationVersion: calculation.calculationVersion,
+        generatedAt: calculation.generatedAt,
+        dataMode: calculation.dataMode,
+        confidence: calculation.confidence,
+        missingInputs: calculation.missingInputs
+      },
       alerts: store.scoped('alerts', farmId).filter((alert) => !alert.acknowledged).slice(-8).reverse()
     };
   };
@@ -1242,15 +1246,24 @@ export function createApp(customStore) {
         seasons: store.scoped('seasons', farm.id),
         soilTests: store.scoped('soilTests', farm.id),
         zones: store.scoped('zones', farm.id),
-        weather: store.scoped('weather', farm.id).length ? store.scoped('weather', farm.id) : store.list('weather')
+        weather: store.scoped('weather', farm.id),
+        activeCrops: store.scoped('activeCrops', farm.id),
+        sensorReadings: store.scoped('sensorReadings', farm.id),
+        activities: store.scoped('activities', farm.id),
+        dataMode: store.data.sourceMode || 'UNKNOWN'
       };
-      const recommendations = categorizedRecommendations(input);
+      const calculation = calculateDecisionEngine(input);
       return {
         farmId: farm.id,
         farmName: farm.name,
         farmer: adminFarmerSummaryFor(farm.farmerId),
-        recommendations,
-        profit: profitAnalysis({ seasons: input.seasons, recommendation: recommendations[2] }),
+        recommendations: calculation.result.recommendations,
+        profit: calculation.result.profit,
+        dataQuality: {
+          missingInputs: calculation.missingInputs,
+          calculationVersion: calculation.calculationVersion,
+          generatedAt: calculation.generatedAt
+        },
         supportingInputs: {
           zones: input.zones.length,
           soilTests: input.soilTests.length,
@@ -1286,13 +1299,28 @@ export function createApp(customStore) {
       const readings = store.scoped('sensorReadings', farm.id);
       const zones = store.scoped('zones', farm.id);
       const activeCrops = store.scoped('activeCrops', farm.id);
-      const budget = waterBudget({ farm, zones, activeCrops, sensorReadings: readings, weather });
+      const calculation = calculateDecisionEngine({
+        farm,
+        zones,
+        activeCrops,
+        sensorReadings: readings,
+        weather:store.scoped('weather', farm.id),
+        seasons: store.scoped('seasons', farm.id),
+        soilTests: store.scoped('soilTests', farm.id),
+        activities: store.scoped('activities', farm.id),
+        dataMode: store.data.sourceMode || 'UNKNOWN'
+      });
       return {
         farmId:farm.id,
         farmName:farm.name,
         farmer:adminFarmerSummaryFor(farm.farmerId),
         zones:zones.map((zone) => ({ id:zone.id, name:zone.name })),
-        assessments:climateRisks({ farm, zones, sensorReadings:readings, weather, water:budget })
+        assessments:calculation.result.risks,
+        dataQuality:{
+          missingInputs:calculation.missingInputs,
+          calculationVersion:calculation.calculationVersion,
+          generatedAt:calculation.generatedAt
+        }
       };
     });
     const provenance = getWeather(store.list('weather'));

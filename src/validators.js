@@ -203,14 +203,26 @@ export function farmPayload(body) {
   }
   const name = requireString(body.name, 'name', 100);
   rejectHtml(name, 'name');
-  const soilType = requireString(body.soilType, 'soilType', 80);
-  rejectHtml(soilType, 'soilType');
-  const waterSource = requireString(body.waterSource, 'waterSource', 80);
-  rejectHtml(waterSource, 'waterSource');
-  const irrigationMethod = requireString(body.irrigationMethod, 'irrigationMethod', 80);
-  rejectHtml(irrigationMethod, 'irrigationMethod');
-  const location = requireString(body.location, 'location', 160);
-  rejectHtml(location, 'location');
+  const optionalString = (value, field, maxLength) => {
+    if (value == null || value === '') return null;
+    const string = requireString(value, field, maxLength);
+    rejectHtml(string, field);
+    return string;
+  };
+  const soilType = optionalString(body.soilType, 'soilType', 80);
+  const waterSource = optionalString(body.waterSource, 'waterSource', 80);
+  const irrigationMethod = optionalString(body.irrigationMethod, 'irrigationMethod', 80);
+  const location = optionalString(body.location, 'location', 160);
+  let irrigationEfficiency = null;
+  if (body.irrigationEfficiency != null && body.irrigationEfficiency !== '') {
+    irrigationEfficiency = positiveNumber(body.irrigationEfficiency, 'irrigationEfficiency');
+    if (irrigationEfficiency > 1) {
+      const error = new Error('irrigationEfficiency must be a fraction greater than 0 and at most 1');
+      error.status = 400;
+      error.code = 'validation_error';
+      throw error;
+    }
+  }
 
   return {
     name,
@@ -218,7 +230,10 @@ export function farmPayload(body) {
     soilType,
     waterSource,
     irrigationMethod,
-    availableWaterLitres: nonNegative(body.availableWaterLitres ?? 0, 'availableWaterLitres'),
+    irrigationEfficiency,
+    availableWaterLitres: body.availableWaterLitres == null || body.availableWaterLitres === ''
+      ? null
+      : nonNegative(body.availableWaterLitres, 'availableWaterLitres'),
     location,
     source: 'FARMER_ENTERED'
   };
@@ -235,15 +250,18 @@ export function zonePayload(body) {
   rejectHtml(farmId, 'farmId');
   const name = requireString(body.name, 'name', 80);
   rejectHtml(name, 'name');
-  const soilType = requireString(body.soilType, 'soilType', 80);
-  rejectHtml(soilType, 'soilType');
-  const waterAvailability = requireString(body.waterAvailability, 'waterAvailability', 60);
-  rejectHtml(waterAvailability, 'waterAvailability');
-  const currentCrop = body.currentCrop ? requireString(body.currentCrop, 'currentCrop', 80) : '';
-  if (currentCrop) rejectHtml(currentCrop, 'currentCrop');
+  const optionalString = (value, field, maxLength) => {
+    if (value == null || value === '') return null;
+    const string = requireString(value, field, maxLength);
+    rejectHtml(string, field);
+    return string;
+  };
+  const soilType = optionalString(body.soilType, 'soilType', 80);
+  const waterAvailability = optionalString(body.waterAvailability, 'waterAvailability', 60);
+  const currentCrop = optionalString(body.currentCrop, 'currentCrop', 80);
 
   const allowedGrowthStages = ['Sowing', 'Vegetative', 'Flowering', 'Grain filling', 'Maturity', 'Harvested'];
-  const growthStage = body.growthStage ? enumValue(body.growthStage, 'growthStage', allowedGrowthStages) : 'Sowing';
+  const growthStage = body.growthStage ? enumValue(body.growthStage, 'growthStage', allowedGrowthStages) : null;
   const sensorId = body.sensorId ? requireString(body.sensorId, 'sensorId', 64) : null;
   if (sensorId) rejectHtml(sensorId, 'sensorId');
 
@@ -331,6 +349,14 @@ export function soilTestPayload(body) {
   }
 
   const value = nonNegative(body.value, 'value');
+  if ((parameter === 'pH' && value > 14)
+    || (parameter === 'Moisture' && value > 100)
+    || (['N', 'P', 'K', 'EC', 'Organic carbon'].includes(parameter) && value > 1_000_000_000)) {
+    const error = new Error(`${parameter} is outside the accepted measurement range`);
+    error.status = 400;
+    error.code = 'validation_error';
+    throw error;
+  }
   const date = validateDate(body.date, 'date');
   const unit = body.unit ? requireString(body.unit, 'unit', 20) : '';
   if (unit) rejectHtml(unit, 'unit');
@@ -391,6 +417,12 @@ export function harvestPayload(body) {
       }
     }
   }
+  if (body.expensesComplete != null && typeof body.expensesComplete !== 'boolean') {
+    const error = new Error('expensesComplete must be a boolean');
+    error.status = 400;
+    error.code = 'validation_error';
+    throw error;
+  }
 
   return {
     farmId,
@@ -404,6 +436,7 @@ export function harvestPayload(body) {
     plantedDate,
     harvestedDate,
     expenses,
+    expensesComplete: body.expensesComplete === true,
     source: 'FARMER_ENTERED'
   };
 }
