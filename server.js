@@ -19,16 +19,21 @@ import { calculateDecisionEngine } from './src/decision-service.js';
 import { dataBadge, getWeather, neuGenExplain } from './src/integrations.js';
 import {
   activityPayload,
+  cropPlanPayload,
+  effectiveRainfallPayload,
   enumValue,
   farmPayload,
   harvestPayload,
   nonNegative,
+  planningPeriodPayload,
   profilePayload,
   requireString,
   sensorPayload,
   soilTestPayload,
   validateLogin,
   validateRegister,
+  waterAvailabilityPayload,
+  waterUseEventPayload,
   zonePayload
 } from './src/validators.js';
 
@@ -152,6 +157,84 @@ export function createApp(customStore) {
     }
   };
 
+  const verifyCropPlanForFarm = (farmId, zoneId, cropPlanId, allowNull = false) => {
+    if (!cropPlanId && allowNull) return;
+    if (!cropPlanId) {
+      const error = new Error('Crop plan is required');
+      error.status = 422;
+      error.code = 'crop_plan_required';
+      throw error;
+    }
+    const plan = store.list('cropPlans').find((item) => item.id === cropPlanId);
+    if (!plan || plan.farmId !== farmId || plan.zoneId !== zoneId) {
+      const error = new Error('Crop plan not found for the specified farm and zone');
+      error.status = 422;
+      error.code = 'crop_plan_mismatch';
+      throw error;
+    }
+    return plan;
+  };
+
+  const datesOverlap = (startA, endA, startB, endB) => {
+    if (!startA || !endA || !startB || !endB) return false;
+    const aStart = new Date(`${startA}T00:00:00.000Z`).getTime();
+    const aEnd = new Date(`${endA}T00:00:00.000Z`).getTime();
+    const bStart = new Date(`${startB}T00:00:00.000Z`).getTime();
+    const bEnd = new Date(`${endB}T00:00:00.000Z`).getTime();
+    return Math.max(aStart, bStart) <= Math.min(aEnd, bEnd);
+  };
+
+  const requireNoCropPlanOverlap = (farmId, zoneId, payload, existingId = null) => {
+    const plans = store.list('cropPlans').filter((item) => item.farmId === farmId && item.zoneId === zoneId && item.id !== existingId && ['planned', 'active'].includes(item.status));
+    const plannedStart = payload.sowingDate || payload.expectedHarvestDate || payload.actualHarvestDate;
+    const plannedEnd = payload.expectedHarvestDate || payload.actualHarvestDate || payload.sowingDate;
+    for (const plan of plans) {
+      const existingStart = plan.sowingDate || plan.expectedHarvestDate || plan.actualHarvestDate;
+      const existingEnd = plan.expectedHarvestDate || plan.actualHarvestDate || plan.sowingDate;
+      if (!existingStart || !existingEnd || !plannedStart || !plannedEnd) {
+        if (plan.season && payload.season && plan.season === payload.season && plan.agriculturalYear === payload.agriculturalYear) {
+          const error = new Error('A competing active crop plan exists for the same zone and period');
+          error.status = 409;
+          error.code = 'crop_plan_conflict';
+          throw error;
+        }
+        continue;
+      }
+      if (datesOverlap(existingStart, existingEnd, plannedStart, plannedEnd)) {
+        const error = new Error('A competing active crop plan exists for the same zone and period');
+        error.status = 409;
+        error.code = 'crop_plan_conflict';
+        throw error;
+      }
+    }
+  };
+
+  const requireNoPlanningPeriodOverlap = (farmId, zoneId, payload, existingId = null) => {
+    const periods = store.list('planningPeriods').filter((item) => item.farmId === farmId && item.zoneId === zoneId && item.id !== existingId && ['draft', 'active'].includes(item.status));
+    for (const period of periods) {
+      if (datesOverlap(period.startDate, period.endDate, payload.startDate, payload.endDate)) {
+        const error = new Error('Overlapping planning periods are not allowed for the same zone');
+        error.status = 409;
+        error.code = 'planning_period_conflict';
+        throw error;
+      }
+    }
+  };
+
+  const requireNoDuplicateRainfall = (farmId, zoneId, planningPeriodId, recordDate, existingId = null) => {
+    const existing = store.list('effectiveRainfall').find((item) => item.farmId === farmId
+      && item.planningPeriodId === planningPeriodId
+      && item.observationDate === recordDate
+      && (!zoneId || item.zoneId === zoneId)
+      && item.id !== existingId);
+    if (existing) {
+      const error = new Error('A rainfall record for this date and planning context already exists');
+      error.status = 409;
+      error.code = 'duplicate_rainfall_record';
+      throw error;
+    }
+  };
+
   const getUserFarms = (user) => {
     if (user.role === 'ADMIN') {
       return store.list('farms');
@@ -165,6 +248,11 @@ export function createApp(customStore) {
     const soilTests = store.scoped('soilTests', farmId);
     const zones = store.scoped('zones', farmId);
     const activeCrops = store.scoped('activeCrops', farmId);
+    const cropPlans = store.scoped('cropPlans', farmId);
+    const planningPeriods = store.scoped('planningPeriods', farmId);
+    const effectiveRainfall = store.scoped('effectiveRainfall', farmId);
+    const waterAvailability = store.scoped('waterAvailability', farmId);
+    const waterUseEvents = store.scoped('waterUseEvents', farmId);
     const activities = store.scoped('activities', farmId);
     const decisionWeather = store.scoped('weather', farmId);
     const weather = decisionWeather.length ? decisionWeather : store.list('weather');
@@ -195,6 +283,11 @@ export function createApp(customStore) {
       farmer: store.getFarmer(farm.farmerId),
       zones,
       activeCrops,
+      cropPlans,
+      planningPeriods,
+      effectiveRainfall,
+      waterAvailability,
+      waterUseEvents,
       latestReading: sensorReadings[0] || null,
       sensorReadings: sensorReadings.slice(0, 20),
       sensorDevices,
@@ -438,6 +531,11 @@ export function createApp(customStore) {
       'soilTests',
       'seasons',
       'activeCrops',
+      'cropPlans',
+      'planningPeriods',
+      'effectiveRainfall',
+      'waterAvailability',
+      'waterUseEvents',
       'sensorReadings',
       'sensorDevices',
       'weather',
@@ -510,6 +608,231 @@ export function createApp(customStore) {
     }
 
     ok(res, { message: 'Zone deleted successfully', zoneId: req.params.id });
+  }));
+
+  // -------------------------------------------------------------
+  // Active crop plans, planning periods, rainfall and water records
+  // -------------------------------------------------------------
+  app.get('/api/farms/:farmId/crop-plans', auth, wrap((req, res) => {
+    verifyFarm(req, req.params.farmId);
+    ok(res, store.scoped('cropPlans', req.params.farmId));
+  }));
+
+  app.post('/api/farms/:farmId/crop-plans', auth, wrap((req, res) => {
+    verifyFarm(req, req.params.farmId);
+    const payload = cropPlanPayload({ ...req.body, farmId: req.params.farmId });
+    verifyZoneForFarm(req.params.farmId, payload.zoneId);
+    requireNoCropPlanOverlap(req.params.farmId, payload.zoneId, payload);
+    const plan = {
+      id: store.makeId('crop-plan'),
+      ...payload,
+      createdAt: store.now(),
+      updatedAt: store.now()
+    };
+    store.add('cropPlans', plan);
+    ok(res, plan, 201);
+  }));
+
+  app.put('/api/farms/:farmId/crop-plans/:planId', auth, wrap((req, res) => {
+    const existing = store.list('cropPlans').find((item) => item.id === req.params.planId);
+    if (!existing) return fail(res, 404, 'not_found', 'Crop plan not found');
+    verifyFarm(req, req.params.farmId);
+    if (existing.farmId !== req.params.farmId) return fail(res, 422, 'farm_mismatch', 'Crop plan does not belong to this farm');
+    verifyZoneForFarm(req.params.farmId, existing.zoneId);
+    const payload = cropPlanPayload({ ...existing, ...req.body, farmId: req.params.farmId, zoneId: req.body.zoneId || existing.zoneId });
+    verifyZoneForFarm(req.params.farmId, payload.zoneId);
+    requireNoCropPlanOverlap(req.params.farmId, payload.zoneId, payload, req.params.planId);
+    ok(res, store.update('cropPlans', req.params.planId, {
+      ...payload,
+      updatedAt: store.now()
+    }));
+  }));
+
+  app.delete('/api/farms/:farmId/crop-plans/:planId', auth, wrap((req, res) => {
+    const existing = store.list('cropPlans').find((item) => item.id === req.params.planId);
+    if (!existing) return fail(res, 404, 'not_found', 'Crop plan not found');
+    verifyFarm(req, req.params.farmId);
+    if (existing.farmId !== req.params.farmId) return fail(res, 422, 'farm_mismatch', 'Crop plan does not belong to this farm');
+    store.remove('cropPlans', req.params.planId);
+    ok(res, { message: 'Crop plan deleted successfully', planId: req.params.planId });
+  }));
+
+  app.get('/api/farms/:farmId/planning-periods', auth, wrap((req, res) => {
+    verifyFarm(req, req.params.farmId);
+    ok(res, store.scoped('planningPeriods', req.params.farmId));
+  }));
+
+  app.post('/api/farms/:farmId/planning-periods', auth, wrap((req, res) => {
+    verifyFarm(req, req.params.farmId);
+    const payload = planningPeriodPayload({ ...req.body, farmId: req.params.farmId });
+    if (payload.zoneId) verifyZoneForFarm(req.params.farmId, payload.zoneId);
+    if (payload.cropPlanId) verifyCropPlanForFarm(req.params.farmId, payload.zoneId || store.list('cropPlans').find((item) => item.id === payload.cropPlanId)?.zoneId, payload.cropPlanId);
+    requireNoPlanningPeriodOverlap(req.params.farmId, payload.zoneId || store.list('cropPlans').find((item) => item.id === payload.cropPlanId)?.zoneId, payload);
+    const record = {
+      id: store.makeId('planning-period'),
+      ...payload,
+      createdAt: store.now(),
+      updatedAt: store.now()
+    };
+    store.add('planningPeriods', record);
+    ok(res, record, 201);
+  }));
+
+  app.put('/api/farms/:farmId/planning-periods/:periodId', auth, wrap((req, res) => {
+    const existing = store.list('planningPeriods').find((item) => item.id === req.params.periodId);
+    if (!existing) return fail(res, 404, 'not_found', 'Planning period not found');
+    verifyFarm(req, req.params.farmId);
+    if (existing.farmId !== req.params.farmId) return fail(res, 422, 'farm_mismatch', 'Planning period does not belong to this farm');
+    const merged = { ...existing, ...req.body, farmId: req.params.farmId, zoneId: req.body.zoneId || existing.zoneId, cropPlanId: req.body.cropPlanId || existing.cropPlanId };
+    const payload = planningPeriodPayload(merged);
+    if (payload.zoneId) verifyZoneForFarm(req.params.farmId, payload.zoneId);
+    if (payload.cropPlanId) verifyCropPlanForFarm(req.params.farmId, payload.zoneId || store.list('cropPlans').find((item) => item.id === payload.cropPlanId)?.zoneId, payload.cropPlanId);
+    requireNoPlanningPeriodOverlap(req.params.farmId, payload.zoneId || store.list('cropPlans').find((item) => item.id === payload.cropPlanId)?.zoneId, payload, req.params.periodId);
+    ok(res, store.update('planningPeriods', req.params.periodId, {
+      ...payload,
+      updatedAt: store.now()
+    }));
+  }));
+
+  app.delete('/api/farms/:farmId/planning-periods/:periodId', auth, wrap((req, res) => {
+    const existing = store.list('planningPeriods').find((item) => item.id === req.params.periodId);
+    if (!existing) return fail(res, 404, 'not_found', 'Planning period not found');
+    verifyFarm(req, req.params.farmId);
+    if (existing.farmId !== req.params.farmId) return fail(res, 422, 'farm_mismatch', 'Planning period does not belong to this farm');
+    store.remove('planningPeriods', req.params.periodId);
+    ok(res, { message: 'Planning period deleted successfully', periodId: req.params.periodId });
+  }));
+
+  app.get('/api/farms/:farmId/effective-rainfall', auth, wrap((req, res) => {
+    verifyFarm(req, req.params.farmId);
+    ok(res, store.scoped('effectiveRainfall', req.params.farmId));
+  }));
+
+  app.post('/api/farms/:farmId/effective-rainfall', auth, wrap((req, res) => {
+    verifyFarm(req, req.params.farmId);
+    const payload = effectiveRainfallPayload({ ...req.body, farmId: req.params.farmId });
+    if (payload.zoneId) verifyZoneForFarm(req.params.farmId, payload.zoneId);
+    const plan = store.list('planningPeriods').find((item) => item.id === payload.planningPeriodId && item.farmId === req.params.farmId);
+    if (!plan) return fail(res, 422, 'planning_period_mismatch', 'Planning period not found for the specified farm');
+    if (payload.zoneId && plan.zoneId && payload.zoneId !== plan.zoneId) return fail(res, 422, 'zone_mismatch', 'Rainfall record zone does not match the planning period');
+    requireNoDuplicateRainfall(req.params.farmId, payload.zoneId || plan.zoneId, payload.planningPeriodId, payload.observationDate);
+    const record = {
+      id: store.makeId('rainfall'),
+      ...payload,
+      createdAt: store.now(),
+      updatedAt: store.now()
+    };
+    store.add('effectiveRainfall', record);
+    ok(res, record, 201);
+  }));
+
+  app.put('/api/farms/:farmId/effective-rainfall/:recordId', auth, wrap((req, res) => {
+    const existing = store.list('effectiveRainfall').find((item) => item.id === req.params.recordId);
+    if (!existing) return fail(res, 404, 'not_found', 'Rainfall record not found');
+    verifyFarm(req, req.params.farmId);
+    if (existing.farmId !== req.params.farmId) return fail(res, 422, 'farm_mismatch', 'Rainfall record does not belong to this farm');
+    const payload = effectiveRainfallPayload({ ...existing, ...req.body, farmId: req.params.farmId });
+    const plan = store.list('planningPeriods').find((item) => item.id === payload.planningPeriodId && item.farmId === req.params.farmId);
+    if (!plan) return fail(res, 422, 'planning_period_mismatch', 'Planning period not found for the specified farm');
+    if (payload.zoneId && plan.zoneId && payload.zoneId !== plan.zoneId) return fail(res, 422, 'zone_mismatch', 'Rainfall record zone does not match the planning period');
+    requireNoDuplicateRainfall(req.params.farmId, payload.zoneId || plan.zoneId, payload.planningPeriodId, payload.observationDate, req.params.recordId);
+    ok(res, store.update('effectiveRainfall', req.params.recordId, {
+      ...payload,
+      updatedAt: store.now()
+    }));
+  }));
+
+  app.delete('/api/farms/:farmId/effective-rainfall/:recordId', auth, wrap((req, res) => {
+    const existing = store.list('effectiveRainfall').find((item) => item.id === req.params.recordId);
+    if (!existing) return fail(res, 404, 'not_found', 'Rainfall record not found');
+    verifyFarm(req, req.params.farmId);
+    if (existing.farmId !== req.params.farmId) return fail(res, 422, 'farm_mismatch', 'Rainfall record does not belong to this farm');
+    store.remove('effectiveRainfall', req.params.recordId);
+    ok(res, { message: 'Rainfall record deleted successfully', recordId: req.params.recordId });
+  }));
+
+  app.get('/api/farms/:farmId/water-availability', auth, wrap((req, res) => {
+    verifyFarm(req, req.params.farmId);
+    ok(res, store.scoped('waterAvailability', req.params.farmId));
+  }));
+
+  app.post('/api/farms/:farmId/water-availability', auth, wrap((req, res) => {
+    verifyFarm(req, req.params.farmId);
+    const payload = waterAvailabilityPayload({ ...req.body, farmId: req.params.farmId });
+    if (payload.zoneId) verifyZoneForFarm(req.params.farmId, payload.zoneId);
+    const record = {
+      id: store.makeId('water-availability'),
+      ...payload,
+      createdAt: store.now(),
+      updatedAt: store.now()
+    };
+    store.add('waterAvailability', record);
+    ok(res, record, 201);
+  }));
+
+  app.put('/api/farms/:farmId/water-availability/:recordId', auth, wrap((req, res) => {
+    const existing = store.list('waterAvailability').find((item) => item.id === req.params.recordId);
+    if (!existing) return fail(res, 404, 'not_found', 'Water availability record not found');
+    verifyFarm(req, req.params.farmId);
+    if (existing.farmId !== req.params.farmId) return fail(res, 422, 'farm_mismatch', 'Water availability record does not belong to this farm');
+    const payload = waterAvailabilityPayload({ ...existing, ...req.body, farmId: req.params.farmId });
+    if (payload.zoneId) verifyZoneForFarm(req.params.farmId, payload.zoneId);
+    ok(res, store.update('waterAvailability', req.params.recordId, {
+      ...payload,
+      updatedAt: store.now()
+    }));
+  }));
+
+  app.delete('/api/farms/:farmId/water-availability/:recordId', auth, wrap((req, res) => {
+    const existing = store.list('waterAvailability').find((item) => item.id === req.params.recordId);
+    if (!existing) return fail(res, 404, 'not_found', 'Water availability record not found');
+    verifyFarm(req, req.params.farmId);
+    if (existing.farmId !== req.params.farmId) return fail(res, 422, 'farm_mismatch', 'Water availability record does not belong to this farm');
+    store.remove('waterAvailability', req.params.recordId);
+    ok(res, { message: 'Water availability record deleted successfully', recordId: req.params.recordId });
+  }));
+
+  app.get('/api/farms/:farmId/water-use-events', auth, wrap((req, res) => {
+    verifyFarm(req, req.params.farmId);
+    ok(res, store.scoped('waterUseEvents', req.params.farmId));
+  }));
+
+  app.post('/api/farms/:farmId/water-use-events', auth, wrap((req, res) => {
+    verifyFarm(req, req.params.farmId);
+    const payload = waterUseEventPayload({ ...req.body, farmId: req.params.farmId });
+    if (payload.zoneId) verifyZoneForFarm(req.params.farmId, payload.zoneId);
+    if (payload.cropPlanId) verifyCropPlanForFarm(req.params.farmId, payload.zoneId || store.list('cropPlans').find((item) => item.id === payload.cropPlanId)?.zoneId, payload.cropPlanId);
+    const record = {
+      id: store.makeId('water-use-event'),
+      ...payload,
+      createdAt: store.now(),
+      updatedAt: store.now()
+    };
+    store.add('waterUseEvents', record);
+    ok(res, record, 201);
+  }));
+
+  app.put('/api/farms/:farmId/water-use-events/:eventId', auth, wrap((req, res) => {
+    const existing = store.list('waterUseEvents').find((item) => item.id === req.params.eventId);
+    if (!existing) return fail(res, 404, 'not_found', 'Water use event not found');
+    verifyFarm(req, req.params.farmId);
+    if (existing.farmId !== req.params.farmId) return fail(res, 422, 'farm_mismatch', 'Water use event does not belong to this farm');
+    const payload = waterUseEventPayload({ ...existing, ...req.body, farmId: req.params.farmId });
+    if (payload.zoneId) verifyZoneForFarm(req.params.farmId, payload.zoneId);
+    if (payload.cropPlanId) verifyCropPlanForFarm(req.params.farmId, payload.zoneId || store.list('cropPlans').find((item) => item.id === payload.cropPlanId)?.zoneId, payload.cropPlanId);
+    ok(res, store.update('waterUseEvents', req.params.eventId, {
+      ...payload,
+      updatedAt: store.now()
+    }));
+  }));
+
+  app.delete('/api/farms/:farmId/water-use-events/:eventId', auth, wrap((req, res) => {
+    const existing = store.list('waterUseEvents').find((item) => item.id === req.params.eventId);
+    if (!existing) return fail(res, 404, 'not_found', 'Water use event not found');
+    verifyFarm(req, req.params.farmId);
+    if (existing.farmId !== req.params.farmId) return fail(res, 422, 'farm_mismatch', 'Water use event does not belong to this farm');
+    store.remove('waterUseEvents', req.params.eventId);
+    ok(res, { message: 'Water use event deleted successfully', eventId: req.params.eventId });
   }));
 
   // -------------------------------------------------------------

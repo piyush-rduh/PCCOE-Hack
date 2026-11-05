@@ -86,7 +86,7 @@ def validate_input(payload: Any) -> dict[str, Any]:
             _object(row, f"{collection}[{index}]")
             if collection == "soilTests":
                 parameter = str(row.get("parameter", "")).strip().lower()
-                maximum = 14 if parameter == "ph" else 100 if parameter == "moisture" else 1_000_000_000
+                maximum = 14 if parameter == "ph" else 100 if parameter == "moisture" else None
                 _optional_number(row.get("value"), f"{collection}[{index}].value", 0, maximum)
             for key, value in row.items():
                 if key in ("value", "soilMoisturePct", "waterLevelPct", "rainfallMm",
@@ -117,6 +117,11 @@ def validate_input(payload: Any) -> dict[str, Any]:
     if "seasons" in root:
         for index, row in enumerate(root["seasons"]):
             _object(row, f"seasons[{index}]")
+            year = row.get("year")
+            if year is not None and (
+                isinstance(year, bool) or not isinstance(year, int) or not 1990 <= year <= 2100
+            ):
+                raise InputError(f"seasons[{index}].year must be an integer from 1990 to 2100 or null")
             for key in ("yieldQuintal", "sellingPricePerQuintal", "areaAcres"):
                 if key in row:
                     minimum = 0.000001 if key == "areaAcres" else 0
@@ -171,6 +176,7 @@ def _land_power(payload: dict[str, Any], generated_at: str) -> dict[str, Any]:
     soil_tests = payload.get("soilTests", [])
     seasons = sorted(payload.get("seasons", []),
                      key=lambda row: (str(row.get("year", "")), str(row.get("id", ""))))
+    ordered_seasons = [row for row in seasons if row.get("year") is not None and row.get("season")]
     farm = payload.get("farm") or {}
     latest: dict[str, dict[str, Any]] = {}
     aliases = {
@@ -189,20 +195,34 @@ def _land_power(payload: dict[str, Any], generated_at: str) -> dict[str, Any]:
     indicators: list[dict[str, Any]] = []
     adjustment_by_parameter = {"pH": 0, "EC": 0, "Organic carbon": 0}
     checks = [
-        ("pH", "Soil pH", lambda value: 6 <= value <= 7.8, 6, -7,
+        ("pH", "Soil pH", "", lambda value: 6 <= value <= 7.8, 6, -7,
          "Prototype workable-range check; regional validation required."),
-        ("EC", "Electrical conductivity", lambda value: value <= 4, 0, -10,
+        ("EC", "Electrical conductivity", "dS/m", lambda value: value <= 4, 0, -10,
          "Prototype salinity flag; unit must be dS/m and threshold is unvalidated."),
-        ("Organic carbon", "Organic carbon", lambda value: value >= 0.75, 8, -8,
+        ("Organic carbon", "Organic carbon", "%", lambda value: value >= 0.75, 8, -8,
          "Prototype organic-carbon flag; unit must be percent and threshold is unvalidated."),
     ]
-    for parameter, label, predicate, positive, negative, explanation in checks:
+    for parameter, label, expected_unit, predicate, positive, negative, explanation in checks:
         row = latest.get(parameter)
         if row is None or row.get("value") is None:
             missing.append(label)
             indicators.append({"parameter": label, "value": None,
                                "unit": None, "status": "missing",
                                "explanation": "No measurement recorded."})
+            continue
+        recorded_unit = row.get("unit") or ""
+        if parameter == "pH" and recorded_unit == "unitless":
+            recorded_unit = ""
+        method = row.get("method")
+        if recorded_unit != expected_unit:
+            missing.append(f"{label} measurement method or compatible unit")
+            indicators.append({
+                "parameter": label, "value": float(row["value"]),
+                "unit": row.get("unit") or None, "measuredAt": row.get("date") or None,
+                "source": row.get("source") or "UNKNOWN", "method": method or None,
+                "status": "uninterpretable",
+                "explanation": "The measurement is retained, but its unit is not compatible with this provisional indicator.",
+            })
             continue
         value = float(row["value"])
         passed = predicate(value)
@@ -216,6 +236,7 @@ def _land_power(payload: dict[str, Any], generated_at: str) -> dict[str, Any]:
         indicators.append({
             "parameter": label, "value": value, "unit": row.get("unit") or None,
             "measuredAt": row.get("date") or None, "source": row.get("source") or "UNKNOWN",
+            "method": row.get("method") or None,
             "status": "prototype_strength" if passed else "prototype_attention",
             "scoreAdjustment": adjustment, "explanation": explanation,
         })
@@ -230,18 +251,27 @@ def _land_power(payload: dict[str, Any], generated_at: str) -> dict[str, Any]:
         row = latest.get(parameter)
         if row is None or row.get("value") is None:
             missing.append(label)
+        elif not isinstance(row.get("unit"), str) or not row.get("unit") or not isinstance(
+            row.get("method"), str
+        ) or not row.get("method").strip():
+            missing.append(f"{label} measurement method or unit")
         indicators.append({
             "parameter": label,
             "value": float(row["value"]) if row and row.get("value") is not None else None,
             "unit": (row.get("unit") or None) if row else None,
             "measuredAt": (row.get("date") or None) if row else None,
             "source": (row.get("source") or "UNKNOWN") if row else None,
+            "method": (row.get("method") or None) if row else None,
             "status": "recorded_not_scored" if row and row.get("value") is not None else "missing",
-            "explanation": "Recorded for completeness; no validated regional scoring rule is configured.",
+            "explanation": "Recorded for completeness; no validated regional scoring rule is configured."
+                           + (" Measurement method or unit is missing." if row and row.get("value") is not None
+                              and (not isinstance(row.get("unit"), str) or not row.get("unit")
+                                   or not isinstance(row.get("method"), str)
+                                   or not row.get("method").strip()) else ""),
         })
 
-    if len(seasons) > 1 and str(seasons[-1].get("crop", "")).casefold() == str(
-        seasons[-2].get("crop", "")
+    if len(ordered_seasons) > 1 and str(ordered_seasons[-1].get("crop", "")).casefold() == str(
+        ordered_seasons[-2].get("crop", "")
     ).casefold():
         score -= 8
         reasons.append("The two latest recorded seasons repeat the same crop name (provisional indicator).")
@@ -252,7 +282,16 @@ def _land_power(payload: dict[str, Any], generated_at: str) -> dict[str, Any]:
         score += 3
         reasons.append("Drip irrigation is recorded; this is a provisional management indicator.")
 
-    measured = sum(1 for row in latest.values() if row.get("value") is not None)
+    measured = sum(
+        1 for parameter in ("pH", "EC", "Organic carbon", "N", "P", "K")
+        if (row := latest.get(parameter)) is not None and row.get("value") is not None
+        and isinstance(row.get("method"), str) and row.get("method").strip()
+        and ((parameter == "pH" and (row.get("unit") or "") in ("", "unitless"))
+             or (parameter == "EC" and row.get("unit") == "dS/m")
+             or (parameter == "Organic carbon" and row.get("unit") == "%")
+             or (parameter in ("N", "P", "K") and isinstance(row.get("unit"), str)
+                 and row.get("unit")))
+    )
     score = max(0, min(100, round(score)))
     trend = []
     for parameter in ("pH", "EC", "Organic carbon", "N", "P", "K"):
@@ -286,14 +325,15 @@ def _land_power(payload: dict[str, Any], generated_at: str) -> dict[str, Any]:
 
 
 def _rotation(payload: dict[str, Any], generated_at: str) -> dict[str, Any]:
-    seasons = sorted(payload.get("seasons", []),
+    seasons = sorted((row for row in payload.get("seasons", [])
+                      if row.get("year") is not None and row.get("season")),
                      key=lambda row: (str(row.get("year", "")), str(row.get("id", ""))))
     crops = [str(row.get("crop", "")).strip() for row in seasons if row.get("crop")]
     repeats = []
     for index in range(1, len(crops)):
         if crops[index].casefold() == crops[index - 1].casefold():
             repeats.append({"crop": crops[index], "positions": [index - 1, index]})
-    missing = [] if seasons else ["Previous crop and season history"]
+    missing = [] if seasons else ["Previous crop and season history with known season and year"]
     missing.append("Reviewed crop-family and rotation reference data")
     result = {
         "cropSequence": crops,
@@ -717,36 +757,53 @@ def _climate_risks(payload: dict[str, Any], water: dict[str, Any],
 def _profit(payload: dict[str, Any], generated_at: str) -> dict[str, Any]:
     seasons = payload.get("seasons", [])
     actual_records = []
-    total_expenses = 0.0
+    expense_totals = []
     total_revenue = 0.0
     total_yield = 0.0
     for season in seasons:
         expenses = season.get("expenses") or {}
-        expense_total = sum(float(value) for value in expenses.values())
+        expense_values = [
+            _optional_number(value, "season.expenses", 0)
+            for value in expenses.values()
+        ]
+        expense_total = (
+            sum(value for value in expense_values if value is not None)
+            if all(value is not None for value in expense_values) else None
+        )
         yield_value = _optional_number(season.get("yieldQuintal"), "season.yieldQuintal", 0)
         price = _optional_number(season.get("sellingPricePerQuintal"),
                                  "season.sellingPricePerQuintal", 0)
         revenue = yield_value * price if yield_value is not None and price is not None else None
-        profit = revenue - expense_total if revenue is not None else None
-        total_expenses += expense_total
+        profit = (
+            revenue - expense_total
+            if revenue is not None and expense_total is not None
+            and season.get("expensesComplete") is True else None
+        )
+        expense_totals.append(expense_total)
         if revenue is not None:
             total_revenue += revenue
             total_yield += yield_value
         actual_records.append({
             **season, "totalExpenses": expense_total, "revenue": revenue,
             "profit": profit if season.get("expensesComplete") is True else None,
-            "breakEvenPricePerQuintal": expense_total / yield_value if yield_value else None,
+            "breakEvenPricePerQuintal": (
+                expense_total / yield_value
+                if expense_total is not None and yield_value else None
+            ),
             "dataType": "recorded_history",
         })
+    all_expenses_known = all(value is not None for value in expense_totals)
+    total_expenses = sum(value for value in expense_totals if value is not None) if all_expenses_known else None
     complete_revenue = bool(actual_records) and all(record["revenue"] is not None for record in actual_records)
     complete_actual = complete_revenue and all(
-        record.get("expensesComplete") is True for record in seasons
+        record.get("expensesComplete") is True and record.get("totalExpenses") is not None
+        for record in actual_records
     )
     demo_mode = payload.get("dataMode") == "DEMO_DATA"
     actual = {
         "expenses": total_expenses if complete_actual else None,
         "revenue": total_revenue if complete_revenue else None,
-        "profit": total_revenue - total_expenses if complete_actual else None,
+        "profit": total_revenue - total_expenses if complete_actual and total_expenses is not None else None,
         "seasons": len(actual_records) if not demo_mode else 0,
         "breakEvenPricePerQuintal": total_expenses / total_yield if complete_actual and total_yield else None,
         "dataType": "simulated_demonstration" if demo_mode else "recorded_history",
@@ -756,7 +813,7 @@ def _profit(payload: dict[str, Any], generated_at: str) -> dict[str, Any]:
         demonstration = {
             "expenses": total_expenses,
             "revenue": total_revenue if complete_revenue else None,
-            "profit": total_revenue - total_expenses if complete_revenue else None,
+            "profit": total_revenue - total_expenses if complete_revenue and total_expenses is not None else None,
             "seasons": len(actual_records),
             "records": [{**record, "dataType": "simulated_demonstration",
                          "source": "SIMULATED_DEMO_DATA"} for record in actual_records],
@@ -775,7 +832,13 @@ def _profit(payload: dict[str, Any], generated_at: str) -> dict[str, Any]:
         expenses = scenario.get("expenses")
         if yield_value is None or price is None or expenses is None:
             continue
-        cost = sum(float(value) for value in expenses.values())
+        scenario_expenses = [
+            _optional_number(value, "financialScenario.expenses", 0)
+            for value in expenses.values()
+        ]
+        if any(value is None for value in scenario_expenses):
+            continue
+        cost = sum(scenario_expenses)
         revenue = float(yield_value) * float(price)
         future_scenarios.append({
             "label": scenario.get("label") or "user_supplied",

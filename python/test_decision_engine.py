@@ -22,13 +22,13 @@ class DecisionEngineTests(unittest.TestCase):
                 "irrigationTriggerMoisturePct": 25, "irrigationDepthMm": 20,
             }],
             "soilTests": [
-                {"parameter": "pH", "value": 7.6, "unit": "", "date": "2026-07-06"},
-                {"parameter": "EC", "value": 0.5, "unit": "dS/m", "date": "2026-07-06"},
-                {"parameter": "Organic carbon", "value": 0.8, "unit": "%", "date": "2026-07-06"},
+                {"parameter": "pH", "value": 7.6, "unit": "", "method": "Lab method A", "date": "2026-07-06"},
+                {"parameter": "EC", "value": 0.5, "unit": "dS/m", "method": "Lab method B", "date": "2026-07-06"},
+                {"parameter": "Organic carbon", "value": 0.8, "unit": "%", "method": "Lab method C", "date": "2026-07-06"},
             ],
             "seasons": [
-                {"crop": "Cotton", "year": 2024},
-                {"crop": "Cotton", "year": 2025},
+                {"crop": "Cotton", "season": "Kharif", "year": 2024},
+                {"crop": "Cotton", "season": "Rabi", "year": 2025},
             ],
             "activities": [],
             "weather": [{"rainfallMm": 12, "effectiveRainfallMm": 5}],
@@ -140,6 +140,46 @@ class DecisionEngineTests(unittest.TestCase):
         self.assertIsNone(profit["future"]["expected"])
         self.assertFalse(profit["future"]["available"])
 
+    def test_nullable_historical_inputs_stay_unknown_and_explicit_zero_stays_zero(self):
+        payload = dict(self.payload)
+        payload["seasons"] = [
+            {
+                "crop": "Millet", "season": None, "year": None,
+                "yieldQuintal": None, "sellingPricePerQuintal": None,
+                "areaAcres": 1, "expensesComplete": True,
+            },
+            {
+                "crop": "Rice", "season": None, "year": None,
+                "yieldQuintal": 0, "sellingPricePerQuintal": 0,
+                "areaAcres": 1, "expenses": {"seed": 0}, "expensesComplete": True,
+            },
+        ]
+        profit = calculate(payload)["profit"]
+        records = {record["crop"]: record for record in profit["records"]}
+        self.assertIsNone(records["Millet"]["revenue"])
+        self.assertIsNone(records["Millet"]["profit"])
+        self.assertEqual(records["Rice"]["revenue"], 0)
+        self.assertEqual(records["Rice"]["profit"], 0)
+        self.assertIsNone(records["Rice"]["breakEvenPricePerQuintal"])
+        self.assertEqual(calculate(payload)["farmMemory"]["cropSequence"], [])
+
+    def test_incompatible_or_methodless_soil_measurements_are_not_scored(self):
+        payload = {
+            "farm": {}, "seasons": [], "zones": [], "activities": [],
+            "activeCrops": [], "sensorReadings": [], "weather": [],
+            "soilTests": [
+                {"parameter": "pH", "value": 7, "unit": "", "date": "2026-01-01"},
+                {"parameter": "EC", "value": 1, "unit": "mS/cm", "method": "Lab", "date": "2026-01-01"},
+                {"parameter": "Organic carbon", "value": 1, "unit": "g/kg", "method": "Lab", "date": "2026-01-01"},
+            ],
+        }
+        land = calculate(payload)["landPower"]
+        self.assertEqual(land["score"], 60)
+        self.assertEqual(land["dataCompleteness"], 0)
+        self.assertEqual([item["status"] for item in land["indicators"][:3]],
+                         ["uninterpretable", "uninterpretable", "uninterpretable"])
+        self.assertIsNone(land["indicators"][0]["method"])
+
     def test_demo_records_are_never_returned_as_actual_farm_finances(self):
         payload = dict(self.payload)
         payload.update({"dataMode": "DEMO_DATA", "seasons": [{
@@ -159,6 +199,8 @@ class DecisionEngineTests(unittest.TestCase):
             calculate({"soilTests": [{"parameter": "pH", "value": 15}]})
         with self.assertRaises(InputError):
             calculate({"soilTests": [{"parameter": "Moisture", "value": 101}]})
+        with self.assertRaises(InputError):
+            calculate({"seasons": [{"crop": "Cotton", "year": 2101}]})
         with self.assertRaises(InputError):
             calculate({"farm": {"availableWaterLitres": -1}})
 

@@ -699,3 +699,53 @@ test('10. Historical updates remain protected by farm ownership', async () => {
   assert.equal(response.status, 403);
   assert.equal((await response.json()).error, 'forbidden');
 });
+
+test('11. New history records preserve unknowns and explicit zeros through authenticated APIs', async () => {
+  const client = createTestClient();
+  const login = await client.post('/api/auth/login', {
+    body: { username: 'ramesh', password: 'farmer123' }
+  });
+  const token = (await login.json()).data.token;
+  const headers = { Authorization: ['Bear', 'er ', token].join('') };
+
+  const legacyBundle = await client.get('/api/farms/farm-1', { headers });
+  assert.equal(legacyBundle.status, 200);
+  const legacySeason = (await legacyBundle.json()).data.seasons.find((item) => item.id === 'season-2');
+  assert.equal(legacySeason.season, 'Rabi');
+  assert.equal(legacySeason.year, 2024);
+
+  const unknownRecord = await client.post('/api/harvests', {
+    headers,
+    body: {
+      farmId: 'farm-1', crop: 'Millet', areaAcres: 1,
+      season: '', year: '', yieldQuintal: '', sellingPricePerQuintal: ''
+    }
+  });
+  assert.equal(unknownRecord.status, 201);
+  const unknown = (await unknownRecord.json()).data;
+  assert.equal(unknown.season, null);
+  assert.equal(unknown.year, null);
+  assert.equal(unknown.yieldQuintal, null);
+  assert.equal(unknown.sellingPricePerQuintal, null);
+
+  const zeroRecord = await client.post('/api/harvests', {
+    headers,
+    body: {
+      farmId: 'farm-1', crop: 'Millet', areaAcres: 1,
+      season: null, year: null, yieldQuintal: 0, sellingPricePerQuintal: 0
+    }
+  });
+  assert.equal(zeroRecord.status, 201);
+  const zero = (await zeroRecord.json()).data;
+  assert.equal(zero.yieldQuintal, 0);
+  assert.equal(zero.sellingPricePerQuintal, 0);
+
+  const invalidSoilUnit = await client.post('/api/soil-tests', {
+    headers,
+    body: {
+      farmId: 'farm-1', parameter: 'EC', value: 1,
+      unit: '%', method: 'Lab method', date: '2026-03-01'
+    }
+  });
+  assert.equal(invalidSoilUnit.status, 400);
+});

@@ -18,7 +18,9 @@ const state = {
 const LOCALE_KEY = 'agcro-language';
 const localeTag = () => ({ mr:'mr-IN', hi:'hi-IN' }[state.lang] || 'en-IN');
 const esc = (value) => String(value ?? '').replace(/[&<>"'/`]/g, (char) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;', '/': '&#x2F;', '`': '&#x60;' }[char]));
+const numberOrNull = (value) => value == null || String(value).trim() === '' ? null : Number(value);
 const number = (value) => value == null ? '—' : Number(value).toLocaleString(localeTag(), { maximumFractionDigits: 0 });
+const measurement = (value) => value == null ? '—' : Number(value).toLocaleString(localeTag(), { maximumFractionDigits: 6 });
 const money = (value) => value == null ? '—' : new Intl.NumberFormat(localeTag(), { style:'currency', currency:'INR', maximumFractionDigits:0 }).format(Number(value));
 const litres = (value) => `${number(value)} ${state.lang === 'mr' ? 'लिटर' : 'L'}`;
 const confidenceLabel = (value) => {
@@ -310,9 +312,20 @@ function renderDashboard() {
 function renderMemory() {
   const d = state.dashboard, land = d.landPower;
   const records = d.profit.records;
-  const seasonRows = records.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>${t('memory.seasons')}</th><th>${t('recommendations.crop')}</th><th>${t('history.planted')}</th><th>${t('history.harvested')}</th><th>${t('memory.yield')}</th><th>${t('memory.revenue')}</th><th>${t('memory.profit')}</th><th>${t('common.source')}</th><th></th></tr></thead><tbody>${records.map((record) => `<tr><td>${dataLabel(record.season)} ${record.year}</td><td><b>${esc(record.crop)}</b><div class="metric-sub">${esc(record.variety || '—')}</div></td><td>${record.plantedDate ? date(record.plantedDate) : t('history.unavailable')}</td><td>${record.harvestedDate ? date(record.harvestedDate) : t('history.unavailable')}</td><td>${number(record.yieldQuintal)} q</td><td>${money(record.revenue)}</td><td class="${record.profit < 0 ? 'number-negative' : 'number-positive'}">${money(record.profit)}</td><td>${sourceBadge(record.source)}</td><td><button class="btn secondary small-button" data-edit-season="${esc(record.id)}">${t('common.edit')}</button></td></tr>`).join('')}</tbody></table></div>` : `<div class="empty-state">${t('memory.noSeasons')}</div>`;
-  const activityItems = d.activities.length ? `<div class="action-list">${d.activities.slice().reverse().map((item) => `<div class="action-item"><div class="action-mark">•</div><div class="action-copy"><div class="inline-between"><b>${esc(item.type)} · ${date(item.date)}</b><button class="btn secondary small-button" data-edit-activity="${esc(item.id)}">${t('common.edit')}</button></div><p>${esc(item.quantity)} ${esc(item.unit)}${item.notes ? ` · ${esc(item.notes)}` : ''}</p>${sourceBadge(item.source)}</div></div>`).join('')}</div>` : `<div class="empty-state">${t('memory.noActivities')}</div>`;
-  const soilItems = d.soilTests.length ? `<div class="action-list">${d.soilTests.slice().reverse().map((item) => `<div class="action-item"><div class="action-mark">pH</div><div class="action-copy"><div class="inline-between"><b>${esc(item.parameter)}: ${number(item.value)} ${esc(item.unit || '')}</b><button class="btn secondary small-button" data-edit-soil="${esc(item.id)}">${t('common.edit')}</button></div><p>${t('forms.zone')}: ${esc(d.zones.find((zone) => zone.id === item.zoneId)?.name || t('history.unavailable'))} · ${date(item.date)}</p>${sourceBadge(item.source)}</div></div>`).join('')}</div>` : `<div class="empty-state">${t('common.noData')}</div>`;
+  const seasonRows = records.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>${t('memory.seasons')}</th><th>${t('recommendations.crop')}</th><th>${t('history.planted')}</th><th>${t('history.harvested')}</th><th>${t('memory.yield')}</th><th>${t('memory.revenue')}</th><th>${t('memory.profit')}</th><th>${t('common.source')}</th><th></th></tr></thead><tbody>${records.map((record) => {
+    const incomplete = [record.season, record.year, record.yieldQuintal, record.sellingPricePerQuintal].some((value) => value == null);
+    return `<tr><td>${record.season ? dataLabel(record.season) : t('history.unknown')} · ${record.year ?? t('history.unknown')}${incomplete ? `<div class="metric-sub">${t('history.incomplete')}</div>` : ''}</td><td><b>${esc(record.crop)}</b><div class="metric-sub">${esc(record.variety || '—')}</div></td><td>${record.plantedDate ? date(record.plantedDate) : t('history.unavailable')}</td><td>${record.harvestedDate ? date(record.harvestedDate) : t('history.unavailable')}</td><td>${record.yieldQuintal == null ? t('history.unknown') : `${number(record.yieldQuintal)} q`}</td><td>${money(record.revenue)}</td><td class="${record.profit < 0 ? 'number-negative' : 'number-positive'}">${money(record.profit)}</td><td>${sourceBadge(record.source)}</td><td><button class="btn secondary small-button" data-edit-season="${esc(record.id)}">${t('common.edit')}</button></td></tr>`;
+  }).join('')}</tbody></table></div>` : `<div class="empty-state">${t('memory.noSeasons')}</div>`;
+  const activityItems = d.activities.length ? `<div class="action-list">${d.activities.slice().reverse().map((item) => `<div class="action-item"><div class="action-mark">•</div><div class="action-copy"><div class="inline-between"><b>${esc(item.type)} · ${date(item.date)}</b><button class="btn secondary small-button" data-edit-activity="${esc(item.id)}">${t('common.edit')}</button></div><p>${item.quantity == null ? t('history.unknown') : esc(item.quantity)} ${esc(item.unit)}${item.notes ? ` · ${esc(item.notes)}` : ''}</p>${sourceBadge(item.source)}</div></div>`).join('')}</div>` : `<div class="empty-state">${t('memory.noActivities')}</div>`;
+  const soilItems = d.soilTests.length ? `<div class="action-list">${d.soilTests.slice().reverse().map((item) => {
+    const warnings = [];
+    if (item.value == null) warnings.push(t('forms.measurementMissing'));
+    if (item.parameter !== 'pH' && !item.unit) warnings.push(t('forms.unitMissing'));
+    if (!item.method) warnings.push(t('forms.methodMissing'));
+    if ((item.parameter === 'EC' && item.unit && item.unit !== 'dS/m')
+      || (item.parameter === 'Organic carbon' && item.unit && item.unit !== '%')) warnings.push(t('forms.measurementUnsupported'));
+    return `<div class="action-item"><div class="action-mark">${esc(item.parameter)}</div><div class="action-copy"><div class="inline-between"><b>${esc(item.parameter)}: ${item.value == null ? t('history.unknown') : `${measurement(item.value)} ${esc(item.unit || '')}`}</b><button class="btn secondary small-button" data-edit-soil="${esc(item.id)}">${t('common.edit')}</button></div><p>${t('forms.zone')}: ${esc(d.zones.find((zone) => zone.id === item.zoneId)?.name || t('history.unavailable'))} · ${date(item.date)} · ${t('forms.method')}: ${esc(item.method || t('history.unknown'))}</p>${warnings.length ? `<p class="notice form-notice">${warnings.join(' · ')}</p>` : ''}${sourceBadge(item.source)}</div></div>`;
+  }).join('')}</div>` : `<div class="empty-state">${t('common.noData')}</div>`;
   const decisions = d.decisions?.length ? `<div class="action-list">${d.decisions.map((item) => `<div class="action-item"><div class="action-mark">✓</div><div><b>${esc(item.crop || item.category)}</b><p>${dataLabel(item.status)} · ${dateTime(item.createdAt)}</p>${sourceBadge(item.source)}</div></div>`).join('')}</div>` : `<div class="empty-state">${t('recommendations.noDecisions')}</div>`;
   return pageHeading(t('memory.eyebrow'), t('memory.title'), t('memory.description'), `<button class="btn" data-action="add-season">${t('history.addSeason')}</button><button class="btn secondary" data-action="log-activity">${t('memory.addActivity')}</button><button class="btn secondary" data-action="add-soil">${t('memory.addSoil')}</button>`) +
   `<div class="grid metric-grid">${metric(t('memory.seasons'), d.seasons.length, d.seasons.length ? `${esc(d.seasons.at(-1).crop)} · ${d.seasons.at(-1).year}` : t('memory.noSeasons'))}${metric(t('memory.soilParameters'), new Set(d.soilTests.map((x) => x.parameter)).size, `${land.missing.length} ${t('memory.missing')}`)}${metric(t('memory.zones'), d.zones.length, `${number(d.zones.reduce((a,z)=>a+Number(z.areaAcres||0),0))} ac`)}${metric(t('memory.activities'), d.activities.length, t('common.farmerRecord'))}</div>` +
@@ -405,12 +418,19 @@ async function renderRoute() {
 
 function activityForm(record = {}) {
   const types = ['Irrigation','Fertilizer','Pesticide','Weeding','Observation'], typeLabels = t('forms.activityTypes'), units = ['mm','kg','litre','labour-days'], unitLabels = t('forms.units');
-  return `<form id="modal-form"><div class="form-grid"><div class="form-field"><label>${t('forms.type')}<select name="type">${types.map((x, i) => `<option value="${esc(x)}" ${record.type === x ? 'selected' : ''}>${esc(typeLabels[i] || x)}</option>`).join('')}${record.type && !types.includes(record.type) ? `<option selected>${esc(record.type)}</option>` : ''}</select></label></div><div class="form-field"><label>${t('forms.date')}<input name="date" type="date" value="${esc(record.date || new Date().toISOString().slice(0,10))}" required></label></div><div class="form-field"><label>${t('forms.quantity')}<input name="quantity" type="number" min="0" step="any" value="${esc(record.quantity ?? 0)}" required></label></div><div class="form-field"><label>${t('forms.unit')}<select name="unit">${units.map((x, i) => `<option value="${esc(x)}" ${record.unit === x ? 'selected' : ''}>${esc(unitLabels[i] || x)}</option>`).join('')}${record.unit && !units.includes(record.unit) ? `<option selected>${esc(record.unit)}</option>` : ''}</select></label></div><div class="form-field"><label>${t('forms.zone')}<select name="zoneId"><option value="">—</option>${state.dashboard.zones.map((zone) => `<option value="${esc(zone.id)}" ${record.zoneId === zone.id ? 'selected' : ''}>${esc(zone.name)}</option>`).join('')}</select></label></div></div><div class="form-field form-wide"><label>${t('forms.notes')}<textarea name="notes" maxlength="1000">${esc(record.notes || '')}</textarea></label></div><button class="btn" type="submit">${t('forms.saveActivity')}</button></form>`;
+  return `<form id="modal-form"><div class="form-grid"><div class="form-field"><label>${t('forms.type')}<select name="type">${types.map((x, i) => `<option value="${esc(x)}" ${record.type === x ? 'selected' : ''}>${esc(typeLabels[i] || x)}</option>`).join('')}${record.type && !types.includes(record.type) ? `<option selected>${esc(record.type)}</option>` : ''}</select></label></div><div class="form-field"><label>${t('forms.date')}<input name="date" type="date" value="${esc(record.date || new Date().toISOString().slice(0,10))}" required></label></div><div class="form-field"><label>${t('forms.quantity')} (${t('history.optional')})<input name="quantity" type="number" min="0" step="any" value="${esc(record.quantity ?? '')}"></label></div><div class="form-field"><label>${t('forms.unit')}<select name="unit">${units.map((x, i) => `<option value="${esc(x)}" ${record.unit === x ? 'selected' : ''}>${esc(unitLabels[i] || x)}</option>`).join('')}${record.unit && !units.includes(record.unit) ? `<option selected>${esc(record.unit)}</option>` : ''}</select></label></div><div class="form-field"><label>${t('forms.zone')}<select name="zoneId"><option value="">—</option>${state.dashboard.zones.map((zone) => `<option value="${esc(zone.id)}" ${record.zoneId === zone.id ? 'selected' : ''}>${esc(zone.name)}</option>`).join('')}</select></label></div></div><div class="form-field form-wide"><label>${t('forms.notes')}<textarea name="notes" maxlength="1000">${esc(record.notes || '')}</textarea></label></div><button class="btn" type="submit">${t('forms.saveActivity')}</button></form>`;
 }
 
 function soilForm(record = {}) {
   const parameters = ['pH','EC','Organic carbon','N','P','K','Moisture'], labels = t('forms.parameters');
-  return `<form id="modal-form"><div class="form-grid"><div class="form-field"><label>${t('forms.parameter')}<select name="parameter">${parameters.map((x, i) => `<option value="${esc(x)}" ${record.parameter === x ? 'selected' : ''}>${esc(labels[i] || x)}</option>`).join('')}${record.parameter && !parameters.includes(record.parameter) ? `<option selected>${esc(record.parameter)}</option>` : ''}</select></label></div><div class="form-field"><label>${t('forms.value')}<input name="value" type="number" min="0" step="any" value="${esc(record.value ?? '')}" required></label></div><div class="form-field"><label>${t('forms.date')}<input name="date" type="date" value="${esc(record.date || new Date().toISOString().slice(0,10))}" required></label></div><div class="form-field"><label>${t('forms.zone')}<select name="zoneId"><option value="">—</option>${state.dashboard.zones.map((zone) => `<option value="${esc(zone.id)}" ${record.zoneId === zone.id ? 'selected' : ''}>${esc(zone.name)}</option>`).join('')}</select></label></div><div class="form-field"><label>${t('forms.unit')}<input name="unit" value="${esc(record.unit || '')}" maxlength="20"></label></div></div><button class="btn" type="submit">${t('forms.saveSoil')}</button></form>`;
+  const units = {
+    pH: [''], EC: ['', 'dS/m', 'mS/cm'], 'Organic carbon': ['', '%', 'g/kg'],
+    N: ['', 'mg/kg', 'kg/ha', 'ppm'], P: ['', 'mg/kg', 'kg/ha', 'ppm'],
+    K: ['', 'mg/kg', 'kg/ha', 'ppm'], Moisture: ['', '%']
+  };
+  const options = [...(units[record.parameter] || [record.unit || ''])];
+  if (record.unit && !options.includes(record.unit)) options.push(record.unit);
+  return `<form id="modal-form"><div class="form-grid"><div class="form-field"><label>${t('forms.parameter')}<select name="parameter">${parameters.map((x, i) => `<option value="${esc(x)}" ${record.parameter === x ? 'selected' : ''}>${esc(labels[i] || x)}</option>`).join('')}${record.parameter && !parameters.includes(record.parameter) ? `<option selected>${esc(record.parameter)}</option>` : ''}</select></label></div><div class="form-field"><label>${t('forms.value')} (${t('history.optional')})<input name="value" type="number" min="0" step="any" value="${esc(record.value ?? '')}"></label></div><div class="form-field"><label>${t('forms.date')}<input name="date" type="date" value="${esc(record.date || new Date().toISOString().slice(0,10))}" required></label></div><div class="form-field"><label>${t('forms.zone')}<select name="zoneId"><option value="">—</option>${state.dashboard.zones.map((zone) => `<option value="${esc(zone.id)}" ${record.zoneId === zone.id ? 'selected' : ''}>${esc(zone.name)}</option>`).join('')}</select></label></div><div class="form-field"><label>${t('forms.unit')}<select name="unit">${options.map((unit) => `<option value="${esc(unit)}" ${unit === (record.unit || '') ? 'selected' : ''}>${unit ? esc(unit) : t(record.parameter === 'pH' ? 'forms.unitless' : 'history.unknown')}</option>`).join('')}</select></label></div><div class="form-field"><label>${t('forms.method')} (${t('history.optional')})<input name="method" value="${esc(record.method || '')}" maxlength="100"></label></div></div><div class="notice form-notice">${t('forms.soilMethodNote')}</div><button class="btn" type="submit">${t('forms.saveSoil')}</button></form>`;
 }
 
 function readingForm() {
@@ -430,25 +450,45 @@ function zoneForm(zone = {}) {
 function seasonForm(record = {}) {
   const expenses = record.expenses || {};
   const expenseKeys = ['seeds','fertilizer','pesticide','labour','irrigation','machinery','transport','other'];
-  return `<form id="season-form"><div class="form-grid"><div class="form-field"><label>${t('recommendations.crop')}<input name="crop" value="${esc(record.crop || '')}" maxlength="80" required></label></div><div class="form-field"><label>${t('history.variety')}<input name="variety" value="${esc(record.variety || '')}" maxlength="80"></label></div><div class="form-field"><label>${t('history.season')}<select name="season">${['Kharif','Rabi','Zaid','Summer','Annual'].map((season) => `<option ${record.season === season ? 'selected' : ''}>${season}</option>`).join('')}</select></label></div><div class="form-field"><label>${t('history.year')}<input name="year" type="number" min="1990" max="2100" value="${esc(record.year || new Date().getFullYear())}" required></label></div><div class="form-field"><label>${t('farms.area')}<input name="areaAcres" type="number" min="0.01" step="any" value="${esc(record.areaAcres || state.dashboard?.farm.areaAcres || '')}" required></label></div><div class="form-field"><label>${t('memory.yield')} (q)<input name="yieldQuintal" type="number" min="0" step="any" value="${esc(record.yieldQuintal ?? '')}" required></label></div><div class="form-field"><label>${t('history.price')} / q<input name="sellingPricePerQuintal" type="number" min="0" step="any" value="${esc(record.sellingPricePerQuintal ?? '')}" required></label></div><div class="form-field"><label>${t('history.planted')}<input name="plantedDate" type="date" value="${esc(record.plantedDate || '')}"></label></div><div class="form-field"><label>${t('history.harvested')}<input name="harvestedDate" type="date" value="${esc(record.harvestedDate || '')}"></label></div></div><h3 class="section-gap">${t('profit.actualExpenses')}</h3><div class="form-grid">${expenseKeys.map((key) => `<div class="form-field"><label>${dataLabel(key)}<input name="expense-${key}" type="number" min="0" step="any" value="${esc(expenses[key] ?? '')}"></label></div>`).join('')}</div><label class="checkbox-row"><input name="expensesComplete" type="checkbox" ${record.expensesComplete ? 'checked' : ''}>${t('profit.expensesComplete')}</label><div class="notice form-notice">${t('profit.expenseCompletenessNote')}</div><div class="notice form-notice">${t('history.recordNote')}</div><button class="btn" type="submit">${t('common.save')}</button></form>`;
+  return `<form id="season-form"><div class="form-grid"><div class="form-field"><label>${t('recommendations.crop')}<input name="crop" value="${esc(record.crop || '')}" maxlength="80" required></label></div><div class="form-field"><label>${t('history.variety')} (${t('history.optional')})<input name="variety" value="${esc(record.variety || '')}" maxlength="80"></label></div><div class="form-field"><label>${t('history.season')} (${t('history.optional')})<select name="season"><option value="" ${record.season ? '' : 'selected'}>${t('history.unknown')}</option>${['Kharif','Rabi','Zaid','Summer','Annual'].map((season) => `<option value="${season}" ${record.season === season ? 'selected' : ''}>${dataLabel(season)}</option>`).join('')}</select></label></div><div class="form-field"><label>${t('history.year')} (${t('history.optional')})<input name="year" type="number" min="1990" max="2100" step="1" value="${esc(record.year ?? '')}"></label></div><div class="form-field"><label>${t('farms.area')} (ac)<input name="areaAcres" type="number" min="0.01" step="any" value="${esc(record.areaAcres ?? state.dashboard?.farm.areaAcres ?? '')}" required></label></div><div class="form-field"><label>${t('memory.yield')} (q, ${t('history.optional')})<input name="yieldQuintal" type="number" min="0" step="any" value="${esc(record.yieldQuintal ?? '')}"></label></div><div class="form-field"><label>${t('history.price')} (₹ / q, ${t('history.optional')})<input name="sellingPricePerQuintal" type="number" min="0" step="any" value="${esc(record.sellingPricePerQuintal ?? '')}"></label></div><input name="currency" type="hidden" value="INR"><div class="form-field"><label>${t('history.planted')} (${t('history.optional')})<input name="plantedDate" type="date" value="${esc(record.plantedDate || '')}"></label></div><div class="form-field"><label>${t('history.harvested')} (${t('history.optional')})<input name="harvestedDate" type="date" value="${esc(record.harvestedDate || '')}"></label></div></div><h3 class="section-gap">${t('profit.actualExpenses')}</h3><div class="form-grid">${expenseKeys.map((key) => `<div class="form-field"><label>${dataLabel(key)} (₹, ${t('history.optional')})<input name="expense-${key}" type="number" min="0" step="any" value="${esc(expenses[key] ?? '')}"></label></div>`).join('')}</div><label class="checkbox-row"><input name="expensesComplete" type="checkbox" ${record.expensesComplete ? 'checked' : ''}>${t('profit.expensesComplete')}</label><div class="notice form-notice">${t('profit.expenseCompletenessNote')}</div><div class="notice form-notice">${t('history.recordNote')}</div><button class="btn" type="submit">${t('common.save')}</button></form>`;
 }
 
 function openForm(titleKey, endpoint, body, recordId = null) {
   const dialog = $('#action-dialog');
   $('#dialog-content').innerHTML = `<h2 class="modal-title">${t(titleKey)}</h2>${body}`;
   dialog.showModal();
+  if (endpoint === '/api/soil-tests') {
+    const form = $('#modal-form');
+    const parameter = form.elements.parameter;
+    const unit = form.elements.unit;
+    const value = form.elements.value;
+    const units = {
+      pH: [''], EC: ['', 'dS/m', 'mS/cm'], 'Organic carbon': ['', '%', 'g/kg'],
+      N: ['', 'mg/kg', 'kg/ha', 'ppm'], P: ['', 'mg/kg', 'kg/ha', 'ppm'],
+      K: ['', 'mg/kg', 'kg/ha', 'ppm'], Moisture: ['', '%']
+    };
+    const refreshUnits = () => {
+      const options = [...(units[parameter.value] || [''])];
+      if (unit.value && !options.includes(unit.value)) options.push(unit.value);
+      unit.innerHTML = options.map((item) => `<option value="${esc(item)}">${item ? esc(item) : t(parameter.value === 'pH' ? 'forms.unitless' : 'history.unknown')}</option>`).join('');
+      if (parameter.value === 'pH') unit.value = '';
+      value.max = parameter.value === 'pH' ? '14' : parameter.value === 'Moisture' ? '100' : '';
+    };
+    parameter.addEventListener('change', refreshUnits);
+    refreshUnits();
+  }
   $('#modal-form')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const raw = Object.fromEntries(new FormData(event.currentTarget).entries());
     const payload = {
       ...raw,
       farmId: state.farmId,
-      quantity: Number(raw.quantity || 0),
-      value: Number(raw.value || 0),
-      soilMoisturePct: Number(raw.soilMoisturePct || 0),
-      temperatureC: Number(raw.temperatureC || 0),
-      humidityPct: Number(raw.humidityPct || 0),
-      waterLevelPct: raw.waterLevelPct === '' || raw.waterLevelPct == null ? null : Number(raw.waterLevelPct || 0),
+      quantity: numberOrNull(raw.quantity),
+      value: numberOrNull(raw.value),
+      soilMoisturePct: numberOrNull(raw.soilMoisturePct),
+      temperatureC: numberOrNull(raw.temperatureC),
+      humidityPct: numberOrNull(raw.humidityPct),
+      waterLevelPct: numberOrNull(raw.waterLevelPct),
       source: 'FARMER_ENTERED'
     };
     try {
@@ -517,9 +557,11 @@ function openSeasonForm(record = null) {
     const raw = Object.fromEntries(new FormData(event.currentTarget).entries());
     const expenses = Object.fromEntries(Object.entries(raw).filter(([key, value]) => key.startsWith('expense-') && value !== '').map(([key, value]) => [key.slice(8), Number(value)]));
     const payload = {
-      farmId: state.farmId, crop: raw.crop, variety: raw.variety, season: raw.season, year: Number(raw.year),
-      areaAcres: Number(raw.areaAcres), yieldQuintal: Number(raw.yieldQuintal),
-      sellingPricePerQuintal: Number(raw.sellingPricePerQuintal), plantedDate: raw.plantedDate || null,
+      farmId: state.farmId, crop: raw.crop, variety: raw.variety,
+      season: raw.season || null, year: numberOrNull(raw.year),
+      areaAcres: numberOrNull(raw.areaAcres), yieldQuintal: numberOrNull(raw.yieldQuintal),
+      sellingPricePerQuintal: numberOrNull(raw.sellingPricePerQuintal), currency: raw.currency,
+      plantedDate: raw.plantedDate || null,
       harvestedDate: raw.harvestedDate || null, expenses, expensesComplete: raw.expensesComplete === 'on'
     };
     try {

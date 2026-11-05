@@ -279,6 +279,13 @@
     "notes": "Notes",
     "parameter": "Parameter",
     "value": "Value",
+    "method": "Test method",
+    "unitless": "Unitless",
+    "measurementMissing": "Measurement not recorded",
+    "unitMissing": "Measurement unit missing",
+    "methodMissing": "Test method missing",
+    "measurementUnsupported": "Unit is not supported by the provisional indicator",
+    "soilMethodNote": "Choose a unit that matches the soil report. Record its test method when known; missing or incompatible details are shown as data-quality warnings and are not used in the provisional score.",
     "zone": "Zone",
     "device": "Device",
     "soilMoisture": "Soil moisture %",
@@ -822,6 +829,9 @@
     "harvested": "Harvest date",
     "soilHistory": "Soil test history",
     "unavailable": "Not recorded",
+    "unknown": "Unknown",
+    "incomplete": "Incomplete record",
+    "optional": "optional",
     "recordNote": "Enter only records you know. Missing historical dates are left blank and are not inferred."
   },
   "notifications": {

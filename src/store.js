@@ -24,6 +24,14 @@ export function createStore() {
   data.sensorDevices = data.sensorDevices || [];
   data.alerts = data.alerts || [];
   data.decisions = data.decisions || [];
+  data.cropPlans = data.cropPlans || [];
+  data.planningPeriods = data.planningPeriods || [];
+  data.effectiveRainfall = data.effectiveRainfall || [];
+  data.waterAvailability = data.waterAvailability || [];
+  data.waterUseEvents = data.waterUseEvents || [];
+  data.effectiveRainfallRecords = data.effectiveRainfallRecords || data.effectiveRainfall;
+  data.waterInventory = data.waterInventory || data.waterAvailability;
+  data.irrigationEvents = data.irrigationEvents || data.waterUseEvents;
 
   const save = () => {
     if (!file) return;
@@ -128,6 +136,16 @@ export function createStore() {
       data.users = data.users || [];
       data.revokedTokens = data.revokedTokens || [];
       data.sensorDevices = data.sensorDevices || [];
+      data.alerts = data.alerts || [];
+      data.decisions = data.decisions || [];
+      data.cropPlans = data.cropPlans || [];
+      data.planningPeriods = data.planningPeriods || [];
+      data.effectiveRainfall = data.effectiveRainfall || [];
+      data.waterAvailability = data.waterAvailability || [];
+      data.waterUseEvents = data.waterUseEvents || [];
+      data.effectiveRainfallRecords = data.effectiveRainfallRecords || data.effectiveRainfall;
+      data.waterInventory = data.waterInventory || data.waterAvailability;
+      data.irrigationEvents = data.irrigationEvents || data.waterUseEvents;
       save();
       return data;
     }
