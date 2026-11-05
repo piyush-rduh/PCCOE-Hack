@@ -140,7 +140,13 @@
     "noActivities": "अभी कोई काम दर्ज नहीं है।",
     "noStrengths": "अभी कोई ताकत दर्ज नहीं है",
     "noLimitations": "अभी कोई मौजूदा सीमा चिह्नित नहीं है",
-    "parametersNeeded": "{parameter} की जानकारी चाहिए"
+    "parametersNeeded": "{parameter} की जानकारी चाहिए",
+    "soilTrend": "मिट्टी का समय-श्रृंखला इतिहास",
+    "waterHistory": "पानी के उपयोग का इतिहास",
+    "waterUse": "पानी का उपयोग",
+    "trendParameter": "माप",
+    "noSoilTrend": "अभी कोई मिट्टी के समय-श्रृंखला रिकॉर्ड नहीं है।",
+    "noWaterUse": "अभी कोई संरचित पानी का उपयोग दर्ज नहीं है।"
   },
   "recommendations": {
     "eyebrow": "फसल निर्णय",

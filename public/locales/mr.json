@@ -140,7 +140,13 @@
     "noActivities": "अजून कामांची नोंद नाही.",
     "noStrengths": "अजून जमेची बाजू नोंदलेली नाही",
     "noLimitations": "सध्या कोणतीही मर्यादा दिसत नाही",
-    "parametersNeeded": "{parameter} आवश्यक"
+    "parametersNeeded": "{parameter} आवश्यक",
+    "soilTrend": "मातीचा कालरेषा इतिहास",
+    "waterHistory": "पाण्याच्या वापराचा इतिहास",
+    "waterUse": "पाणी वापर",
+    "trendParameter": "घटक",
+    "noSoilTrend": "अजून मातीचा दिनांकित कालरेषा इतिहास नाही.",
+    "noWaterUse": "अजून संरचित पाणी वापराची नोंद नाही."
   },
   "recommendations": {
     "eyebrow": "पीक निर्णय",

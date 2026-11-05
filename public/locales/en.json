@@ -140,7 +140,13 @@
     "noActivities": "No activities recorded.",
     "noStrengths": "No strengths recorded yet",
     "noLimitations": "No current limitation flagged",
-    "parametersNeeded": "{parameter} needed"
+    "parametersNeeded": "{parameter} needed",
+    "soilTrend": "Soil trend history",
+    "waterHistory": "Water-use history",
+    "waterUse": "Water use",
+    "trendParameter": "Parameter",
+    "noSoilTrend": "No dated soil trend yet.",
+    "noWaterUse": "No structured water-use events recorded yet."
   },
   "recommendations": {
     "eyebrow": "Crop decisions",
