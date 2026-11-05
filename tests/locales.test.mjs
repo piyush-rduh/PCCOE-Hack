@@ -31,3 +31,38 @@ test('English, Marathi, and Hindi locales expose the same translation structure'
     assertSameShape(english, readLocale(language), language);
   }
 });
+
+test('admin dashboard copy is translated and its language preference is independent', () => {
+  const english = readLocale('en');
+  const adminScript = fs.readFileSync(path.join(localeDirectory, '..', 'admin.js'), 'utf8');
+  const requiredAdminCopy = [
+    'Farm network overview',
+    'Farmer management',
+    'Farm and zone inventory',
+    'IoT device inventory',
+    'Sensor monitoring',
+    'Alert management centre',
+    'Agriculture decision review',
+    'Weather and climate risk',
+    'Administrative reports',
+    'System health and integrations',
+    'Apply filters',
+    'Download CSV',
+    'Review stored alerts and acknowledge them through the existing authenticated alert API. This module does not generate alerts.',
+    'Acknowledge this alert?',
+    'Something went wrong. Please try again.'
+  ];
+
+  for (const language of ['mr', 'hi']) {
+    const adminCopy = readLocale(language).adminUi;
+    for (const phrase of requiredAdminCopy) {
+      assert.ok(adminCopy[phrase], `${language} is missing admin translation: ${phrase}`);
+      assert.notEqual(adminCopy[phrase], english.adminUi[phrase], `${language} did not translate: ${phrase}`);
+    }
+  }
+
+  assert.match(adminScript, /const LOCALE_KEY = 'agcro-admin-language'/);
+  assert.doesNotMatch(adminScript, /'agcro-language'/);
+  assert.match(adminScript, /localStorage\.setItem\(LOCALE_KEY, next\)/);
+  assert.match(adminScript, /localStorage\.getItem\(LOCALE_KEY\)/);
+});

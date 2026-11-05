@@ -1,7 +1,19 @@
 (() => {
   const { useEffect, useState } = React;
-  const h = React.createElement;
-  const LOCALE_KEY = 'agcro-language';
+  const createElement = React.createElement;
+  const localizeChild = (child) => typeof child === 'string'
+    ? locale?.adminUi?.[child] || locale?.adminUi?.statuses?.[child] || getPath(locale || {}, `data.${child}`) || child
+    : Array.isArray(child) ? child.map(localizeChild) : child;
+  const h = (type, props, ...children) => {
+    const localizedProps = props ? { ...props } : props;
+    if (localizedProps) {
+      for (const key of ['aria-label', 'placeholder', 'title']) {
+        if (typeof localizedProps[key] === 'string') localizedProps[key] = localizeChild(localizedProps[key]);
+      }
+    }
+    return createElement(type, localizedProps, ...children.map(localizeChild));
+  };
+  const LOCALE_KEY = 'agcro-admin-language';
   const ADMIN_TOKEN_KEY = 'agcro-admin-token';
   let locale = null;
   let currentLang = 'mr';
@@ -12,9 +24,51 @@
     if (typeof value !== 'string') return value === undefined ? key : value;
     return value.replace(/\{(\w+)\}/g, (_, name) => vars[name] ?? '');
   };
-  const dateTime = (value) => value
-    ? new Date(value).toLocaleString({ mr:'mr-IN', hi:'hi-IN', en:'en-IN' }[currentLang] || 'en-IN', { dateStyle:'medium', timeStyle:'short' })
-    : '—';
+  const tx = (english, vars = {}) => {
+    const value = locale?.adminUi?.[english] || english;
+    return value.replace(/\{(\w+)\}/g, (_, name) => vars[name] ?? '');
+  };
+  const formatNumber = (value) => value == null ? '—' : Number(value).toLocaleString(localeTag());
+  const localeTag = () => ({ mr:'mr-IN', hi:'hi-IN' }[currentLang] || 'en-IN');
+  const localizedStatus = (value) => {
+    const key = String(value ?? '');
+    for (const candidate of [key, key.toLowerCase(), key[0]?.toUpperCase() + key.slice(1).toLowerCase()]) {
+      const adminValue = locale?.adminUi?.[candidate];
+      if (typeof adminValue === 'string') return adminValue;
+      const status = locale?.adminUi?.statuses?.[candidate];
+      if (status) return status;
+    }
+    const data = locale?.data || {};
+    for (const candidate of [key, key.toLowerCase(), key[0]?.toUpperCase() + key.slice(1).toLowerCase()]) {
+      if (typeof data[candidate] === 'string') return data[candidate];
+    }
+    return key || '—';
+  };
+  const formatDate = (value) => {
+    if (!value) return '—';
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? showText(value)
+      : parsed.toLocaleDateString(localeTag(), { day:'numeric', month:'short', year:'numeric' });
+  };
+  const localizedError = (error) => {
+    const keys = {
+      unauthorized:'errors.unauthorized', token_expired:'errors.unauthorized',
+      forbidden:'errors.forbidden', not_found:'errors.notFound',
+      validation_error:'errors.validation', invalid_credentials:'auth.invalidCredentials',
+      rate_limited:'errors.rateLimited', auth_rate_limited:'errors.rateLimited',
+      internal_error:'errors.request', request_failed:'adminUi.requestFailed',
+      report_export_failed:'adminUi.reportFailed', authentication_failed:'adminUi.authFailed',
+      admin_authorization_failed:'adminUi.authFailed'
+    };
+    if (error?.code && keys[error.code]) return t(keys[error.code]);
+    if (error?.authFailure || error?.status === 401 || error?.status === 403) return tx('Administrator authorization failed.');
+    return tx('Something went wrong. Please try again.');
+  };
+  const dateTime = (value) => {
+    if (!value) return '—';
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? '—' : parsed.toLocaleString(localeTag(), { dateStyle:'medium', timeStyle:'short' });
+  };
   const sourceTone = (source) => ({ LIVE_SENSOR:'live', EXTERNAL_API:'external', FARMER_ENTERED:'farmer', SIMULATED_SENSOR:'demo', SIMULATED_WEATHER:'demo', DECISION_ENGINE:'engine' }[source] || 'muted');
   const sourceLabel = (source) => ({
     LIVE_SENSOR:'common.liveSensor', EXTERNAL_API:'common.externalApi', FARMER_ENTERED:'common.farmerEntered',
@@ -24,14 +78,15 @@
     SIMULATED_SENSOR:'common.simulated', SIMULATED_WEATHER:'common.simulated', DECISION_ENGINE:'common.decisionEngine'
   }[source]) : source || 'Unknown source');
   const showText = (value) => value == null || value === '' ? '—' : String(value);
+  const displayValue = (value) => typeof value === 'number' ? formatNumber(value) : showText(value);
 
   function Badge({ children, tone = 'engine' }) {
     return h('span', { className:`provenance ${tone}` }, children);
   }
 
   function LanguageSwitch({ lang, onChange }) {
-    return h('div', { className:'language-switcher', role:'group', 'aria-label':t('language.label') },
-      ['mr','en','hi'].map((code) => h('button', {
+    return h('div', { className:'language-switcher', role:'group', 'aria-label':tx('Language') },
+      ['en','mr','hi'].map((code) => h('button', {
         key:code, type:'button', className:`language-button ${lang === code ? 'selected' : ''}`, onClick:() => onChange(code)
       }, t(`language.${{ mr:'marathi', en:'english', hi:'hindi' }[code]}`)))
     );
@@ -54,13 +109,20 @@
           body:JSON.stringify(demo ? { username:'admin', password:'admin123' } : { username, password })
         });
         const payload = await response.json();
-        if (!response.ok) throw new Error(payload.message || 'Authentication failed');
+        if (!response.ok) {
+          const error = new Error(payload.message || 'Authentication failed');
+          error.code = payload.error;
+          error.status = response.status;
+          throw error;
+        }
         if (payload.data?.user?.role !== 'ADMIN' || !payload.data?.token) {
-          throw new Error('Access denied: account does not have administrator privileges.');
+          const error = new Error('Access denied: account does not have administrator privileges.');
+          error.code = 'forbidden';
+          throw error;
         }
         onLoginSuccess(payload.data.token);
       } catch (error) {
-        setLoginError(error.message);
+        setLoginError(localizedError(error));
       } finally {
         setLoading(false);
       }
@@ -77,7 +139,7 @@
           h('section', { className:'hero-card' },
             h('div', { className:'eyebrow' }, t('admin.roleBoundary')),
             h('h2', null, t('admin.reviewNetwork')),
-            h('p', null, 'Sign in with an administrator account to review cross-farm records and device controls.'),
+            h('p', null, tx('Sign in with an administrator account to review cross-farm records and device controls.')),
             loginError ? h('div', { className:'alert-item critical', role:'alert', style:{ margin:'12px 0' } }, loginError) : null,
             h('form', { onSubmit:(event) => submitLogin(event), style:{ marginTop:16 } },
               h('div', { className:'form-field', style:{ marginBottom:12 } }, h('label', null, t('auth.username'),
@@ -85,13 +147,13 @@
               h('div', { className:'form-field', style:{ marginBottom:16 } }, h('label', null, t('auth.password'),
                 h('input', { type:'password', value:password, autoComplete:'current-password', required:true, onChange:(event) => setPassword(event.target.value), style:{ width:'100%', padding:10, marginTop:4 } }))),
               h('div', { className:'hero-action', style:{ display:'flex', gap:10, flexWrap:'wrap' } },
-                h('button', { className:'btn', type:'submit', disabled:loading }, loading ? 'Authenticating…' : t('auth.signIn')),
+                h('button', { className:'btn', type:'submit', disabled:loading }, loading ? tx('Authenticating…') : t('auth.signIn')),
                 h('button', { type:'button', className:'btn secondary', disabled:loading, onClick:(event) => submitLogin(event, true) }, t('auth.demoAdmin')),
                 h('a', { className:'btn secondary', href:'/' }, t('admin.farmerApp'))
               )
             )
           ),
-          h('div', { className:'notice', style:{ marginTop:14 } }, 'Admin access is verified by the API. Client role headers are not trusted.')
+          h('div', { className:'notice', style:{ marginTop:14 } }, tx('Admin access is verified by the API. Client role headers are not trusted.'))
         )
       )
     );
@@ -109,10 +171,17 @@
     const payload = await response.json().catch(() => ({}));
     if (response.status === 401 || response.status === 403) {
       const error = new Error(payload.message || 'Administrator authorization failed.');
+      error.code = payload.error;
+      error.status = response.status;
       error.authFailure = true;
       throw error;
     }
-    if (!response.ok) throw new Error(payload.message || `Request failed (${response.status})`);
+    if (!response.ok) {
+      const error = new Error(payload.message || `Request failed (${response.status})`);
+      error.code = payload.error || 'request_failed';
+      error.status = response.status;
+      throw error;
+    }
     return payload.data;
   }
 
@@ -127,7 +196,7 @@
   function Metric({ label, value, sub }) {
     return h('div', { className:'metric-card' },
       h('div', { className:'metric-label' }, label),
-      h('div', { className:'metric-value' }, showText(value)),
+    h('div', { className:'metric-value' }, displayValue(value)),
       h('div', { className:'metric-sub' }, sub)
     );
   }
@@ -176,7 +245,7 @@
         setPage(nextPage);
         setFilters(nextFilters);
       } catch (requestError) {
-        setError(requestError.message);
+        setError(localizedError(requestError));
         if (requestError.authFailure) onLogout(false);
       } finally {
         setLoading(false);
@@ -209,10 +278,15 @@
           const payload = await response.json().catch(() => ({}));
           if (response.status === 401 || response.status === 403) {
             const authError = new Error(payload.message || 'Administrator authorization failed.');
+            authError.code = payload.error;
+            authError.status = response.status;
             authError.authFailure = true;
             throw authError;
           }
-          throw new Error(payload.message || `Report export failed (${response.status})`);
+          const error = new Error(payload.message || `Report export failed (${response.status})`);
+          error.code = payload.error || 'report_export_failed';
+          error.status = response.status;
+          throw error;
         }
         const url = URL.createObjectURL(await response.blob());
         const link = document.createElement('a');
@@ -220,31 +294,31 @@
         link.download = `agcro-${type}-report.csv`;
         link.click();
         URL.revokeObjectURL(url);
-        setNotice(`${type} report downloaded. Files with no matching records contain column headers only.`);
+        setNotice(tx('{type} report downloaded. Files with no matching records contain column headers only.', { type:tx(type) }));
       } catch (requestError) {
-        setError(requestError.message);
+        setError(localizedError(requestError));
         if (requestError.authFailure) onLogout(false);
       }
     };
     const acknowledge = async (alertId) => {
-      if (!confirm('Acknowledge this alert?')) return;
+      if (!confirm(tx('Acknowledge this alert?'))) return;
       try {
         await adminRequest(`/api/alerts/${encodeURIComponent(alertId)}/acknowledge`, token, { method:'POST' });
-        setNotice('Alert acknowledged.');
+        setNotice(tx('Alert acknowledged.'));
         refresh();
       } catch (requestError) {
-        setError(requestError.message);
+        setError(localizedError(requestError));
         if (requestError.authFailure) onLogout(false);
       }
     };
     const revokeDevice = async (device) => {
-      if (!confirm(`Revoke sensor device ${device.id}? This blocks future readings using its credential.`)) return;
+      if (!confirm(tx('Revoke sensor device {id}? This blocks future readings using its credential.', { id:device.id }))) return;
       try {
         await adminRequest(`/api/admin/devices/${encodeURIComponent(device.id)}/revoke`, token, { method:'POST' });
-        setNotice(`Device ${device.id} revoked.`);
+        setNotice(tx('Device {id} revoked.', { id:device.id }));
         refresh();
       } catch (requestError) {
-        setError(requestError.message);
+        setError(localizedError(requestError));
         if (requestError.authFailure) onLogout(false);
       }
     };
@@ -255,7 +329,7 @@
         setDetail({ type:'farmer', data:await adminRequest(`/api/admin/farmers/${encodeURIComponent(id)}`, token) });
       } catch (requestError) {
         setDetail(null);
-        setError(requestError.message);
+        setError(localizedError(requestError));
       }
     };
     const showFarm = async (farmId) => {
@@ -265,7 +339,7 @@
         setDetail({ type:'farm', data:await adminRequest(`/api/admin/farms/${encodeURIComponent(farmId)}`, token) });
       } catch (requestError) {
         setDetail(null);
-        setError(requestError.message);
+        setError(localizedError(requestError));
       }
     };
     const showDevice = async (device) => {
@@ -276,7 +350,7 @@
         setDetail({ type:'device', data:device, readings:readings.items || [] });
       } catch (requestError) {
         setDetail(null);
-        setError(requestError.message);
+        setError(localizedError(requestError));
       }
     };
 
@@ -312,39 +386,39 @@
       const activities = overview.recentActivities || [];
       content = h('div', null,
         pageHeading('Farm network overview', 'Backend records only. Seeded and simulated data remain labeled; device presence requires a recent authenticated live reading.'),
-        h('div', { className:'notice admin-demo-label' }, overview.demoData ? 'DEMO DATA · values reflect the development/demo store' : `Data mode: ${showText(overview.dataMode)}`),
+        h('div', { className:'notice admin-demo-label' }, overview.demoData ? 'DEMO DATA · values reflect the development/demo store' : tx('Data mode: {mode}', { mode:localizedStatus(overview.dataMode) })),
         h('div', { className:'grid metric-grid admin-metrics' },
           [
             ['Registered farmers', metrics.farmers, 'Farmer records'], ['Registered farms', metrics.farms, 'Farm inventory'],
             ['Field zones', metrics.zones, 'Mapped zones'], ['Sensor devices', metrics.devices, 'Registered inventory'],
             ['Online devices', metrics.onlineDevices, 'Verified live reading within 15 minutes'],
-            ['Offline / unverified', `${metrics.offlineDevices} / ${metrics.unverifiedDevices}`, 'Stale / no authenticated live reading'],
+            ['Offline / unverified', tx('{offline} / {unverified}', { offline:formatNumber(metrics.offlineDevices), unverified:formatNumber(metrics.unverifiedDevices) }), 'Stale / no authenticated live reading'],
             ['Revoked devices', metrics.revokedDevices, 'Credential disabled'], ['Active alerts', metrics.activeAlerts, 'Not acknowledged'],
-            ['Activities / readings', `${metrics.activities} / ${metrics.readings}`, 'Stored records']
+            ['Activities / readings', tx('{activities} / {readings}', { activities:formatNumber(metrics.activities), readings:formatNumber(metrics.readings) }), 'Stored records']
           ].map(([label, value, sub]) => h(Metric, { key:label, label, value, sub }))
         ),
         h('div', { className:'grid content-grid admin-dashboard-grid' },
           h('section', { className:'card' }, h('h2', null, 'Recent farming activities'),
             table(['Date','Farmer','Farm','Zone','Activity','Source'], activities.map((item) => h('tr', { key:item.id },
-              h('td', null, showText(item.date)), h('td', null, showText(item.farmer?.name)),
+              h('td', null, formatDate(item.date)), h('td', null, showText(item.farmer?.name)),
               h('td', null, showText(item.farmName)), h('td', null, showText(item.zoneName)),
-              h('td', null, showText(item.type)), h('td', null, provenance(item.source))
+              h('td', null, localizedStatus(item.type)), h('td', null, provenance(item.source))
             )), 'No farming activities recorded.')),
           h('section', { className:'card' }, h('h2', null, 'Recent sensor readings'),
             table(['Recorded','Farm / zone','Moisture','Temperature','Source'], readings.map((item) => h('tr', { key:item.id },
               h('td', null, dateTime(item.recordedAt)), h('td', null, `${showText(item.farmName)} / ${showText(item.zoneName)}`),
-              h('td', null, item.soilMoisturePct == null ? '—' : `${item.soilMoisturePct}%`),
-              h('td', null, item.temperatureC == null ? '—' : `${item.temperatureC} °C`), h('td', null, provenance(item.source))
+              h('td', null, item.soilMoisturePct == null ? '—' : `${formatNumber(item.soilMoisturePct)}%`),
+              h('td', null, item.temperatureC == null ? '—' : `${formatNumber(item.temperatureC)} °C`), h('td', null, provenance(item.source))
             )), 'No sensor readings recorded.')),
           h('section', { className:'card' }, h('h2', null, 'Recent alerts'),
             overview.alerts.length ? overview.alerts.slice(0, 5).map((alert) => h('div', { className:`alert-item ${alert.severity === 'critical' ? 'critical' : ''}`, key:alert.id },
-              h('div', { className:'alert-title-row' }, h('b', null, showText(alert.title)), h('span', { className:`severity ${alert.severity}` }, showText(alert.severity))),
-              h('p', null, showText(alert.description)), h('div', { className:'metric-sub' }, `${showText(alert.farmName)} · ${dateTime(alert.createdAt)}`)
+              h('div', { className:'alert-title-row' }, h('b', null, localizedStatus(alert.title)), h('span', { className:`severity ${alert.severity}` }, localizedStatus(alert.severity))),
+              h('p', null, localizedStatus(alert.description)), h('div', { className:'metric-sub' }, `${showText(alert.farmName)} · ${dateTime(alert.createdAt)}`)
             )) : h('div', { className:'empty-state' }, 'No alerts are available.')
           ),
           h('section', { className:'card' }, h('h2', null, 'Recent administrative events'),
             overview.administrativeEvents?.available
-              ? table(['Time','Action'], overview.administrativeEvents.items.map((event) => h('tr',{key:event.id},h('td',null,dateTime(event.createdAt)),h('td',null,showText(event.action)))), 'No admin events recorded.')
+              ? table(['Time','Action'], overview.administrativeEvents.items.map((event) => h('tr',{key:event.id},h('td',null,dateTime(event.createdAt)),h('td',null,localizedStatus(event.action)))), 'No admin events recorded.')
               : h('div', { className:'empty-state' }, 'Administrative actions are not audit-logged by the current demo store.')
           )
         )
@@ -359,10 +433,10 @@
         table(['Farmer','Username','Phone','Location','Farms','Registered',''], items.map((farmer) => h('tr', { key:farmer.id },
           h('td', null, h('b', null, showText(farmer.name)), h('div', { className:'metric-sub' }, showText(farmer.id))),
           h('td', null, showText(farmer.username)), h('td', null, showText(farmer.phone)), h('td', null, showText(farmer.location)),
-          h('td', null, showText(farmer.farmCount)), h('td', null, dateTime(farmer.createdAt)),
+          h('td', null, displayValue(farmer.farmCount)), h('td', null, dateTime(farmer.createdAt)),
           h('td', null, h('button', { className:'btn secondary', type:'button', onClick:() => showFarmer(farmer.id) }, 'View profile'))
         )), 'No farmer accounts match the filters.'),
-        h('div', { className:'admin-pagination' }, `Page ${pageData.page} · ${pageData.total} farmers`,
+        h('div', { className:'admin-pagination' }, tx('Page {page} · {total} farmers', { page:formatNumber(pageData.page), total:formatNumber(pageData.total) }),
           h('button', { className:'btn secondary', disabled:pageData.page <= 1, onClick:() => setPageNumber(pageData.page - 1) }, 'Previous'),
           h('button', { className:'btn secondary', disabled:pageData.page * pageData.pageSize >= pageData.total, onClick:() => setPageNumber(pageData.page + 1) }, 'Next'))
       );
@@ -376,12 +450,12 @@
           fieldLabel('Order', h('select', { name:'sortOrder', defaultValue:filters.sortOrder || 'asc' }, h('option',{value:'asc'},'Ascending'),h('option',{value:'desc'},'Descending'))), ...dateFilters()]),
         table(['Farm','Farmer','Area','Soil','Irrigation','Water available','Zones','Location',''], items.map((farm) => h('tr', { key:farm.id },
           h('td', null, h('b', null, showText(farm.name)), h('div', { className:'metric-sub' }, showText(farm.id))),
-          h('td', null, showText(farm.farmer?.name)), h('td', null, `${showText(farm.areaAcres)} ac`),
-          h('td', null, showText(farm.soilType)), h('td', null, showText(farm.irrigationMethod)),
-          h('td', null, `${showText(farm.availableWaterLitres)} L`), h('td', null, showText(farm.zoneCount)),
+          h('td', null, showText(farm.farmer?.name)),           h('td', null, tx('{value} ac', { value:formatNumber(farm.areaAcres) })),
+          h('td', null, showText(farm.soilType)), h('td', null, localizedStatus(farm.irrigationMethod)),
+          h('td', null, `${formatNumber(farm.availableWaterLitres)} L`), h('td', null, displayValue(farm.zoneCount)),
           h('td', null, showText(farm.location)), h('td', null, h('button', { className:'btn secondary', type:'button', onClick:() => showFarm(farm.id) }, 'View records'))
         )), 'No farms match the filters.'),
-        h('div', { className:'admin-pagination' }, `Page ${pageData.page} · ${pageData.total} farms`,
+        h('div', { className:'admin-pagination' }, tx('Page {page} · {total} farms', { page:formatNumber(pageData.page), total:formatNumber(pageData.total) }),
           h('button', { className:'btn secondary', disabled:pageData.page <= 1, onClick:() => setPageNumber(pageData.page - 1) }, 'Previous'),
           h('button', { className:'btn secondary', disabled:pageData.page * pageData.pageSize >= pageData.total, onClick:() => setPageNumber(pageData.page + 1) }, 'Next'))
       );
@@ -395,12 +469,12 @@
           h('td', null, h('b', null, showText(device.name)), h('div', { className:'metric-sub' }, showText(device.id))),
           h('td', null, `${showText(device.farmer?.name)} / ${showText(device.farmName)}`),
           h('td', null, `${showText(device.zoneName)} (${showText(device.zoneId)})`),
-          h('td', null, h(Badge, { tone:device.status === 'online' ? 'live' : device.status === 'revoked' ? 'demo' : 'muted' }, showText(device.status))),
+          h('td', null, h(Badge, { tone:device.status === 'online' ? 'live' : device.status === 'revoked' ? 'demo' : 'muted' }, localizedStatus(device.status))),
           h('td', null, device.lastAuthenticatedAt ? dateTime(device.lastAuthenticatedAt) : 'No authenticated live reading'),
-          h('td', null, showText(device.credentialStatus)),
-          h('td', null, device.latestReading ? `${showText(device.latestReading.soilMoisturePct)}% · ${dateTime(device.latestReading.recordedAt)} · ${sourceLabel(device.latestReading.source)}` : 'No reading recorded'),
+          h('td', null, localizedStatus(device.credentialStatus)),
+          h('td', null, device.latestReading ? `${formatNumber(device.latestReading.soilMoisturePct)}% · ${dateTime(device.latestReading.recordedAt)} · ${sourceLabel(device.latestReading.source)}` : 'No reading recorded'),
           h('td', null, h('button', { className:'btn secondary', onClick:() => showDevice(device) }, 'Details'),
-            device.status === 'revoked' ? ' Revoked' : h('button', { className:'btn danger', onClick:() => revokeDevice(device) }, 'Revoke'))
+            ' ', device.status === 'revoked' ? localizedStatus('revoked') : h('button', { className:'btn danger', onClick:() => revokeDevice(device) }, 'Revoke'))
         )), 'No sensor devices match the filters.')
       );
     } else if (page === 'readings' && pageData) {
@@ -413,12 +487,12 @@
         table(['Time','Device','Farm / zone','Moisture','Temperature','Humidity','Validity','Source'], items.map((reading) => h('tr', { key:reading.id },
           h('td', null, dateTime(reading.recordedAt)), h('td', null, showText(reading.deviceId)),
           h('td', null, `${showText(reading.farmName)} / ${showText(reading.zoneName)}`),
-          h('td', null, reading.soilMoisturePct == null ? '—' : `${reading.soilMoisturePct}%`),
-          h('td', null, reading.temperatureC == null ? '—' : `${reading.temperatureC} °C`),
-          h('td', null, reading.humidityPct == null ? '—' : `${reading.humidityPct}%`),
-          h('td', null, showText(reading.validity)), h('td', null, provenance(reading.source))
+          h('td', null, reading.soilMoisturePct == null ? '—' : `${formatNumber(reading.soilMoisturePct)}%`),
+          h('td', null, reading.temperatureC == null ? '—' : `${formatNumber(reading.temperatureC)} °C`),
+          h('td', null, reading.humidityPct == null ? '—' : `${formatNumber(reading.humidityPct)}%`),
+          h('td', null, localizedStatus(reading.validity)), h('td', null, provenance(reading.source))
         )), 'No sensor readings match the filters.'),
-        h('div', { className:'admin-pagination' }, `Page ${pageData.page} · ${pageData.total} readings`,
+        h('div', { className:'admin-pagination' }, tx('Page {page} · {total} readings', { page:formatNumber(pageData.page), total:formatNumber(pageData.total) }),
           h('button', { className:'btn secondary', disabled:pageData.page <= 1, onClick:() => setPageNumber(pageData.page - 1) }, 'Previous'),
           h('button', { className:'btn secondary', disabled:pageData.page * pageData.pageSize >= pageData.total, onClick:() => setPageNumber(pageData.page + 1) }, 'Next'))
       );
@@ -431,11 +505,11 @@
           ), fieldLabel('Status', h('select', { name:'status', defaultValue:filters.status || '' },
             h('option', { value:'' }, 'All statuses'), h('option', { value:'active' }, 'Active'), h('option', { value:'acknowledged' }, 'Acknowledged'))), ...dateFilters()]),
         table(['Alert','Severity','Farmer / farm / zone','Created','Status','Source','Action'], items.map((alert) => h('tr', { key:alert.id },
-          h('td', null, h('b', null, showText(alert.title)), h('div', { className:'metric-sub' }, showText(alert.description))),
-          h('td', null, h('span', { className:`severity ${alert.severity}` }, showText(alert.severity))),
+          h('td', null, h('b', null, localizedStatus(alert.title)), h('div', { className:'metric-sub' }, localizedStatus(alert.description))),
+          h('td', null, h('span', { className:`severity ${alert.severity}` }, localizedStatus(alert.severity))),
           h('td', null, `${showText(alert.farmer?.name)} / ${showText(alert.farmName)} / ${showText(alert.zoneName)}`),
           h('td', null, dateTime(alert.createdAt)),
-          h('td', null, alert.acknowledged ? `Acknowledged · ${dateTime(alert.acknowledgedAt)}` : 'Active'),
+          h('td', null, alert.acknowledged ? tx('Acknowledged · {date}', { date:dateTime(alert.acknowledgedAt) }) : localizedStatus('active')),
           h('td', null, provenance(alert.source)),
           h('td', null, alert.acknowledged ? '—' : h('button', { className:'btn secondary', onClick:() => acknowledge(alert.id) }, 'Acknowledge'))
         )), 'No stored alerts match the filters.')
@@ -447,35 +521,48 @@
         h('section', { className:'card' }, h('h2', null, 'Recorded decisions'),
           table(['Date','Farmer / farm','Category','Crop','Status','Summary','Source'], items.map((decision) => h('tr', { key:decision.id },
             h('td', null, dateTime(decision.createdAt)), h('td', null, `${showText(decision.farmer?.name)} / ${showText(decision.farmName)}`),
-            h('td', null, showText(decision.category)), h('td', null, showText(decision.crop)),
-            h('td', null, showText(decision.status)), h('td', null, showText(decision.summary || decision.question)),
+            h('td', null, localizedStatus(decision.category)), h('td', null, showText(decision.crop)),
+            h('td', null, localizedStatus(decision.status)), h('td', null, showText(decision.summary || decision.question)),
             h('td', null, provenance(decision.source))
           )), 'No decision records match the filters.')),
         (pageData.scenarios || []).map((scenario) => h('section', { className:'card admin-scenario', key:scenario.farmId },
-          h('h2', null, `Estimates · ${scenario.farmName} · ${showText(scenario.farmer?.name)}`),
-          h('p', { className:'card-description' }, `Recorded historical profit: ${scenario.profit.actual.profit == null ? 'Unavailable' : scenario.profit.actual.profit.toLocaleString('en-IN')} · ${scenario.profit.actual.seasons} actual seasons. Future figures are estimates only.`),
-          h('p', { className:'metric-sub' }, `Engine ${showText(scenario.dataQuality?.calculationVersion)} · ${scenario.dataQuality?.missingInputs?.length || 0} missing inputs · ${showText(scenario.dataQuality?.generatedAt)}`),
-          h('p', { className:'metric-sub' }, `Current context available (not persisted as original decision inputs): ${scenario.supportingInputs.zones} zones · ${scenario.supportingInputs.soilTests} soil tests · ${scenario.supportingInputs.historicalSeasons} historical seasons · ${scenario.supportingInputs.recentActivities} activities · Weather: ${showText(scenario.supportingInputs.weatherSource)} · Sensor: ${showText(scenario.supportingInputs.latestReadingSource)}`),
+          h('h2', null, tx('Estimates · {farm} · {farmer}', { farm:scenario.farmName, farmer:showText(scenario.farmer?.name) })),
+          h('p', { className:'card-description' }, tx('Recorded historical profit: {profit} · {seasons} actual seasons. Future figures are estimates only.', {
+            profit:scenario.profit.actual.profit == null ? tx('Unavailable') : formatNumber(scenario.profit.actual.profit),
+            seasons:formatNumber(scenario.profit.actual.seasons)
+          })),
+          h('p', { className:'metric-sub' }, tx('Engine {version} · {count} missing inputs · {generated}', {
+            version:showText(scenario.dataQuality?.calculationVersion),
+            count:formatNumber(scenario.dataQuality?.missingInputs?.length || 0),
+            generated:dateTime(scenario.dataQuality?.generatedAt)
+          })),
+          h('p', { className:'metric-sub' }, tx('Current context available (not persisted as original decision inputs): {zones} zones · {soils} soil tests · {seasons} historical seasons · {activities} activities · Weather: {weather} · Sensor: {sensor}', {
+            zones:formatNumber(scenario.supportingInputs.zones), soils:formatNumber(scenario.supportingInputs.soilTests),
+            seasons:formatNumber(scenario.supportingInputs.historicalSeasons), activities:formatNumber(scenario.supportingInputs.recentActivities),
+            weather:localizedStatus(scenario.supportingInputs.weatherSource), sensor:localizedStatus(scenario.supportingInputs.latestReadingSource)
+          })),
           h('div', { className:'grid admin-scenario-grid' }, scenario.recommendations.map((recommendation) => h('article', { className:'metric-card', key:recommendation.category },
-            h('div', { className:'metric-label' }, `${recommendation.category} · ${recommendation.crop || 'No crop ranked'}`),
+            h('div', { className:'metric-label' }, `${localizedStatus(recommendation.category)} · ${recommendation.crop || tx('No crop ranked')}`),
             h('div', { className:'metric-value' }, recommendation.available ? 'Reference-backed estimate' : 'Unavailable'),
-            h('div', { className:'metric-sub' }, `Confidence: ${recommendation.confidence?.level || 'low'} · No unverified values shown`),
-            h('p', null, (recommendation.missingInputs || []).join(' · '))
+            h('div', { className:'metric-sub' }, tx('Confidence: {level} · No unverified values shown', { level:localizedStatus(recommendation.confidence?.level || 'low') })),
+            h('p', null, (recommendation.missingInputs || []).map(localizedStatus).join(' · '))
           ))),
-          h('p', { className:'notice' }, `Profit assumptions: ${(scenario.profit.future.assumptions || []).join(' ')}`)
+          h('p', { className:'notice' }, tx('Profit assumptions: {assumptions}', {
+            assumptions:(scenario.profit.future.assumptions || []).map(localizedStatus).join(' ')
+          }))
         ))
       );
     } else if (page === 'weather' && pageData) {
       const items = pageData.items || [];
       const riskItems = pageData.risks || [];
-      content = h('div', null, pageHeading('Weather and climate risk', `${showText(pageData.integrationMode)} · ${showText(pageData.note)}`),
+      content = h('div', null, pageHeading('Weather and climate risk', `${localizedStatus(pageData.integrationMode)} · ${localizedStatus(pageData.note)}`),
         filtersBar([farmSelect(), ...dateFilters()]),
         table(['Observation date','Farm / zone association','Temperature','Rain','Humidity','Source','Last updated'], items.map((item, index) => h('tr', { key:`${item.id || item.date}-${index}` },
-          h('td', null, showText(item.date)),
+          h('td', null, formatDate(item.date)),
           h('td', null, item.farmId ? `${showText(item.farmName)} / ${showText(item.zoneName || 'All zones')} · ${showText(item.farmer?.name)}` : 'Not farm-specific'),
-          h('td', null, item.temperatureC == null ? '—' : `${item.temperatureC} °C`),
-          h('td', null, item.rainfallMm == null ? '—' : `${item.rainfallMm} mm`),
-          h('td', null, item.humidityPct == null ? '—' : `${item.humidityPct}%`),
+          h('td', null, item.temperatureC == null ? '—' : `${formatNumber(item.temperatureC)} °C`),
+          h('td', null, item.rainfallMm == null ? '—' : `${formatNumber(item.rainfallMm)} mm`),
+          h('td', null, item.humidityPct == null ? '—' : `${formatNumber(item.humidityPct)}%`),
           h('td', null, provenance(item.source)),
           h('td', null, item.updatedAt || item.recordedAt ? dateTime(item.updatedAt || item.recordedAt) : '—')
         )), 'No weather observations match the selected farm/date range.'),
@@ -486,10 +573,10 @@
           const flood = item.assessments?.find((risk) => risk.type === 'flood_waterlogging');
           return [h('tr', { key:item.farmId },
             h('td', null, `${showText(item.farmName)} / ${showText(item.farmer?.name)}`),
-            h('td', null, (item.zones || []).map((zone) => zone.name).join(', ') || 'No zones'),
-            h('td', null, `${showText(drought?.level)} (${showText(drought?.score)}) · Affected: ${(drought?.affectedZones || []).join(', ') || 'None'}`),
-            h('td', null, `${showText(flood?.level)} (${showText(flood?.score)}) · Affected: ${(flood?.affectedZones || []).join(', ') || 'None'}`),
-            h('td', null, `${showText(drought?.confidence?.level)} / ${showText(flood?.confidence?.level)}`)
+            h('td', null, (item.zones || []).map((zone) => zone.name).join(', ') || tx('No zones')),
+            h('td', null, `${localizedStatus(drought?.level)} (${showText(drought?.score)}) · ${tx('Affected: {zones}', { zones:(drought?.affectedZones || []).join(', ') || tx('None') })}`),
+            h('td', null, `${localizedStatus(flood?.level)} (${showText(flood?.score)}) · ${tx('Affected: {zones}', { zones:(flood?.affectedZones || []).join(', ') || tx('None') })}`),
+            h('td', null, `${localizedStatus(drought?.confidence?.level)} / ${localizedStatus(flood?.confidence?.level)}`)
           )];
         }), 'No farm risk assessments are available.')
       );
@@ -507,14 +594,14 @@
     } else if (page === 'health' && pageData) {
       content = h('div', null, pageHeading('System health and integrations', 'Configuration status only; no secrets or environment variable values are shown.'),
         h('div', { className:'grid metric-grid admin-health-grid' },
-          h(Metric, { label:'Backend API', value:pageData.api, sub:`Service: ${pageData.service}` }),
-          h(Metric, { label:'Application version', value:pageData.version, sub:`Generated ${dateTime(pageData.generatedAt)}` }),
+          h(Metric, { label:'Backend API', value:pageData.api, sub:tx('Service: {service}', { service:pageData.service }) }),
+          h(Metric, { label:'Application version', value:pageData.version, sub:tx('Generated {date}', { date:dateTime(pageData.generatedAt) }) }),
           h(Metric, { label:'Storage mode', value:pageData.storageMode, sub:'Development/demo storage' }),
           h(Metric, { label:'Database adapter', value:pageData.databaseAdapter, sub:'MySQL integration is not implemented' })
         ),
         h('section', { className:'card' }, h('h2', null, 'Integration status'),
           h('dl', { className:'admin-health-list' }, Object.entries(pageData.integrations || {}).map(([key, value]) =>
-            h('div', { key }, h('dt', null, key), h('dd', null, showText(value)))
+            h('div', { key }, h('dt', null, localizedStatus(key)), h('dd', null, localizedStatus(value)))
           )),
           h('p', { className:'notice' }, 'Demo weather is simulated. A configured provider is not live until verified and called. Device online status requires an authenticated LIVE_SENSOR reading.')
         )
@@ -523,7 +610,7 @@
 
     if (pageData?.items && pageData.total > pageData.pageSize && !['farmers','farms','readings'].includes(page)) {
       content = h(React.Fragment, null, content,
-        h('div', { className:'admin-pagination' }, `Page ${pageData.page} · ${pageData.total} records`,
+        h('div', { className:'admin-pagination' }, tx('Page {page} · {total} records', { page:formatNumber(pageData.page), total:formatNumber(pageData.total) }),
           h('button', { className:'btn secondary', disabled:pageData.page <= 1, onClick:() => setPageNumber(pageData.page - 1) }, 'Previous'),
           h('button', { className:'btn secondary', disabled:pageData.page * pageData.pageSize >= pageData.total, onClick:() => setPageNumber(pageData.page + 1) }, 'Next'))
       );
@@ -547,14 +634,23 @@
             h('div', { key:label }, h('dt', null, label), h('dd', null, showText(value)))
           )),
           (farmer.farms || []).map((farm) => h('section', { className:'admin-detail-section', key:farm.id },
-            h('h3', null, `${farm.name} · ${farm.areaAcres} acres`),
+            h('h3', null, tx('{farm} · {area} acres', { farm:farm.name, area:formatNumber(farm.areaAcres) })),
             h('p', null, `${farm.location} · ${farm.soilType} · ${farm.irrigationMethod}`),
             h('h4', null, 'Zones'),
-            (farm.zones || []).map((zone) => h('p', { key:zone.id }, `${zone.name} (${zone.id}) · ${zone.areaAcres} acres · ${zone.soilType} · ${zone.currentCrop || 'No current crop'} · Water: ${zone.waterAvailability}`)),
+            (farm.zones || []).map((zone) => h('p', { key:zone.id }, tx('{zone} ({id}) · {area} acres · {soil} · {crop} · Water: {water}', {
+              zone:zone.name, id:zone.id, area:formatNumber(zone.areaAcres), soil:zone.soilType,
+              crop:zone.currentCrop || tx('No current crop'), water:localizedStatus(zone.waterAvailability)
+            }))),
             h('h4', null, 'Crop / season history'),
-            (farm.seasons || []).map((season) => h('p', { key:season.id }, `${season.year} ${season.season} · ${season.crop} · yield ${showText(season.yieldQuintal)} quintals · ${sourceLabel(season.source)}`)),
+            (farm.seasons || []).map((season) => h('p', { key:season.id }, tx('{year} {season} · {crop} · yield {yield} quintals · {source}', {
+              year:formatNumber(season.year), season:localizedStatus(season.season), crop:season.crop,
+              yield:formatNumber(season.yieldQuintal), source:sourceLabel(season.source)
+            }))),
             h('h4', null, 'Activity history'),
-            (farm.activities || []).map((activity) => h('p', { key:activity.id }, `${activity.date} · ${activity.type} · ${activity.quantity} ${activity.unit}`))
+            (farm.activities || []).map((activity) => h('p', { key:activity.id }, tx('{date} · {type} · {quantity} {unit} · {source}', {
+              date:formatDate(activity.date), type:localizedStatus(activity.type), quantity:formatNumber(activity.quantity),
+              unit:activity.unit, source:sourceLabel(activity.source)
+            })))
           ))
         )
       );
@@ -563,22 +659,31 @@
       detailPanel = h('div', { className:'admin-modal-backdrop', onClick:(event) => { if (event.target === event.currentTarget) setDetail(null); } },
         h('section', { className:'card admin-modal', role:'dialog', 'aria-modal':'true', 'aria-labelledby':'detail-title' },
           h('div', { className:'inline-between' }, h('h2', { id:'detail-title' }, showText(farm.name)), h('button', { className:'btn secondary', onClick:() => setDetail(null) }, 'Close')),
-          h('p', null, `${showText(farm.farmer?.name)} · ${farm.location} · ${farm.areaAcres} acres · ${farm.soilType} · ${farm.irrigationMethod}`),
+          h('p', null, tx('{farmer} · {location} · {area} acres · {soil} · {irrigation}', {
+            farmer:showText(farm.farmer?.name), location:farm.location, area:formatNumber(farm.areaAcres),
+            soil:farm.soilType, irrigation:localizedStatus(farm.irrigationMethod)
+          })),
           h('h3', null, 'Zones'),
           table(['Zone ID','Zone','Area','Soil','Irrigation','Current crop','Water availability','Sensor'], (farm.zones || []).map((zone) => h('tr', { key:zone.id },
-            h('td', null, showText(zone.id)), h('td', null, showText(zone.name)), h('td', null, `${showText(zone.areaAcres)} ac`),
-            h('td', null, showText(zone.soilType)), h('td', null, showText(farm.irrigationMethod)),
-            h('td', null, showText(zone.currentCrop)), h('td', null, showText(zone.waterAvailability)), h('td', null, showText(zone.sensorId))
+            h('td', null, showText(zone.id)), h('td', null, showText(zone.name)), h('td', null, tx('{value} ac', { value:formatNumber(zone.areaAcres) })),
+            h('td', null, showText(zone.soilType)), h('td', null, localizedStatus(farm.irrigationMethod)),
+            h('td', null, showText(zone.currentCrop)), h('td', null, localizedStatus(zone.waterAvailability)), h('td', null, showText(zone.sensorId))
           )), 'No field zones recorded.'),
           h('h3', null, 'Soil records'),
           table(['Date','Zone','Parameter','Value','Source'], (farm.soilTests || []).map((soil) => h('tr', { key:soil.id },
-            h('td', null, showText(soil.date)), h('td', null, showText(soil.zoneId)), h('td', null, showText(soil.parameter)),
+            h('td', null, formatDate(soil.date)), h('td', null, showText(soil.zoneId)), h('td', null, localizedStatus(soil.parameter)),
             h('td', null, `${showText(soil.value)} ${showText(soil.unit)}`), h('td', null, provenance(soil.source))
           )), 'No soil tests recorded.'),
           h('h3', null, 'Crop and season history'),
-          (farm.seasons || []).map((season) => h('p', { key:season.id }, `${season.year} ${season.season} · ${season.crop} · yield ${showText(season.yieldQuintal)} quintals · ${provenance(season.source)}`)),
+          (farm.seasons || []).map((season) => h('p', { key:season.id }, tx('{year} {season} · {crop} · yield {yield} quintals · {source}', {
+            year:formatNumber(season.year), season:localizedStatus(season.season), crop:season.crop,
+            yield:formatNumber(season.yieldQuintal), source:sourceLabel(season.source)
+          }))),
           h('h3', null, 'Activities'),
-          (farm.activities || []).map((activity) => h('p', { key:activity.id }, `${activity.date} · ${activity.type} · ${activity.quantity} ${activity.unit} · ${sourceLabel(activity.source)}`))
+          (farm.activities || []).map((activity) => h('p', { key:activity.id }, tx('{date} · {type} · {quantity} {unit} · {source}', {
+            date:formatDate(activity.date), type:localizedStatus(activity.type), quantity:formatNumber(activity.quantity),
+            unit:activity.unit, source:sourceLabel(activity.source)
+          })))
         )
       );
     } else if (detail?.type === 'device') {
@@ -598,7 +703,7 @@
             h('td',null,dateTime(reading.recordedAt)),h('td',null,reading.soilMoisturePct == null ? '—' : `${reading.soilMoisturePct}%`),
             h('td',null,reading.temperatureC == null ? '—' : `${reading.temperatureC} °C`),
             h('td',null,reading.humidityPct == null ? '—' : `${reading.humidityPct}%`),
-            h('td',null,showText(reading.validity)),h('td',null,provenance(reading.source))
+            h('td', null, localizedStatus(reading.validity)),h('td',null,provenance(reading.source))
           )), 'No readings are associated with this device.')
         )
       );
@@ -619,7 +724,7 @@
       )
     );
     const header = h('header', { className:'topbar' },
-      h('button', { className:'icon-button admin-menu-button', type:'button', 'aria-expanded':String(menuOpen), onClick:() => setMenuOpen(!menuOpen) }, '☰'),
+      h('button', { className:'icon-button admin-menu-button', type:'button', 'aria-label':tx('Open navigation'), 'aria-expanded':String(menuOpen), onClick:() => setMenuOpen(!menuOpen) }, '☰'),
       h('div', { className:'breadcrumbs' }, h('span', null, 'AGCRO'), h('span', { className:'crumb-divider' }, '/'), h('strong', null, currentLabel)),
       h('div', { className:'topbar-actions' },
         h(LanguageSwitch, { lang, onChange }),
@@ -643,7 +748,10 @@
 
   function AdminApp() {
     const storedLanguage = localStorage.getItem(LOCALE_KEY);
-    const [lang, setLang] = useState(['en','mr','hi'].includes(storedLanguage) ? storedLanguage : ((navigator.language || '').toLowerCase().startsWith('en') ? 'en' : 'mr'));
+    const browserLanguage = (navigator.language || '').toLowerCase();
+    const initialLanguage = ['en','mr','hi'].includes(storedLanguage) ? storedLanguage
+      : browserLanguage.startsWith('hi') ? 'hi' : browserLanguage.startsWith('en') ? 'en' : 'mr';
+    const [lang, setLang] = useState(initialLanguage);
     const [ready, setReady] = useState(false);
     const [localeError, setLocaleError] = useState('');
     const [token, setToken] = useState(localStorage.getItem(ADMIN_TOKEN_KEY) || '');
@@ -652,16 +760,20 @@
     const loadLocale = async (next) => {
       if (!['en','mr','hi'].includes(next)) throw new Error('Unsupported language selection.');
       const response = await fetch(`/locales/${next}.json`);
-      if (!response.ok) throw new Error(`Could not load the ${next} language file.`);
+      if (!response.ok) throw new Error('Could not load the selected language file.');
       locale = await response.json();
       currentLang = next;
       setLang(next);
+      document.documentElement.lang = next;
+      document.title = tx('AGCRO · Admin Console');
       localStorage.setItem(LOCALE_KEY, next);
       setReady(true);
     };
-    useEffect(() => { loadLocale(lang).catch((error) => setLocaleError(error.message)); }, []);
+    useEffect(() => {
+      loadLocale(lang).catch(() => setLocaleError('Could not load the selected language file.'));
+    }, []);
 
-    const changeLanguage = (next) => loadLocale(next).catch((error) => setLocaleError(error.message));
+    const changeLanguage = (next) => loadLocale(next).catch(() => window.alert(tx('Could not load the selected language file.')));
     const handleLoginSuccess = (newToken) => {
       setLogoutError('');
       setToken(newToken);
@@ -674,16 +786,16 @@
         try {
           await adminRequest('/api/auth/logout', currentToken, { method:'POST' });
         } catch (error) {
-          failure = error.message;
+          failure = localizedError(error);
         }
       }
       setToken('');
       localStorage.removeItem(ADMIN_TOKEN_KEY);
-      setLogoutError(failure ? `Admin session cleared locally; server logout reported: ${failure}` : '');
+      setLogoutError(failure ? tx('Admin session cleared locally; server logout reported: {error}', { error:failure }) : '');
     };
 
-    if (localeError) return h('div', { className:'page-wrap' }, h('div', { className:'card admin-error', role:'alert' }, localeError));
-    if (!ready) return h('div', { className:'page-wrap loading-state' }, h('div', { className:'spinner' }), h('p', null, t('common.loading')));
+    if (localeError) return h('div', { className:'page-wrap' }, h('div', { className:'card admin-error', role:'alert' }, tx(localeError)));
+    if (!ready) return h('div', { className:'page-wrap loading-state' }, h('div', { className:'spinner' }), h('p', null, tx('Loading admin console…')));
     if (!token) return h('div', null,
       logoutError ? h('div', { className:'notice admin-logout-error', role:'status' }, logoutError) : null,
       h(AdminLogin, { onLoginSuccess:handleLoginSuccess, lang, onChange:changeLanguage })
