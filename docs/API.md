@@ -8,7 +8,7 @@ The in-memory demo repository uses `sample-data/demo.json`; set `AGCRO_DATA_FILE
 
 ## Agriculture decision engine
 
-The authenticated farm bundle and decision endpoints use the Python primary engine through a fixed JSON subprocess contract. Responses include `status`, `result`, `reasons`, `assumptions`, `missingInputs`, a non-probabilistic `confidence` evidence-completeness measure, `dataSources`, `calculationVersion`, and `generatedAt`. Module outputs retain those fields plus their module-specific result.
+The authenticated farm bundle and decision endpoints use the Python primary engine through a fixed JSON subprocess contract. Responses include `status`, `result`, legacy `reasons`, locale-neutral `messages` (`code` plus numeric/data `params`), `assumptions`, `missingInputs`, a non-probabilistic `confidence` evidence-completeness measure, `dataSources`, `calculationVersion`, and `generatedAt`. Irrigation includes a structured `recommendationMessage`; recommendation results include `messages` and `riskMessages`. English, Marathi, and Hindi templates share the `engineMessages` code and placeholder shape.
 
 The engine process is fixed to `python/decision_engine.py`; request data is never executed as code. Configure `AGCRO_PYTHON` if the `python` executable is not on `PATH`. The process timeout defaults to 4 seconds (`AGCRO_DECISION_TIMEOUT_MS`, bounded to 100–10,000 ms). An unavailable, timed-out, or invalid engine response returns `503 decision_engine_unavailable`; invalid calculation input returns `422 decision_input_invalid`. Internal Python errors are not returned.
 
@@ -51,6 +51,18 @@ All endpoints below require `Authorization: Bearer <token>`.
 | POST | `/api/activities` | FARMER (Owner) / ADMIN | Record field activity (validated date & safe type) |
 | POST | `/api/soil-tests` | FARMER (Owner) / ADMIN | Record soil parameter test |
 | POST | `/api/harvests` | FARMER (Owner) / ADMIN | Record completed crop season; `expensesComplete: true` confirms full itemized costs before net profit is calculated |
+| GET / POST | `/api/farms/:farmId/crop-plans` | FARMER (Owner) / ADMIN | List or create crop plans with explicit nullable season/year/date/stage data |
+| PUT / DELETE | `/api/farms/:farmId/crop-plans/:planId` | FARMER (Owner) / ADMIN | Update a crop plan; deletion is blocked when planning, water-use, or scenario records refer to it |
+| GET / POST | `/api/farms/:farmId/planning-periods` | FARMER (Owner) / ADMIN | List or create dated planning windows; duration must match the dates |
+| PUT / DELETE | `/api/farms/:farmId/planning-periods/:periodId` | FARMER (Owner) / ADMIN | Update a planning window; deletion is blocked while rainfall records refer to it |
+| GET / POST | `/api/farms/:farmId/effective-rainfall` | FARMER (Owner) / ADMIN | Store explicit daily effective rainfall in mm, with method, source, and provenance |
+| PUT / DELETE | `/api/farms/:farmId/effective-rainfall/:recordId` | FARMER (Owner) / ADMIN | Update or remove a farmer-owned daily effective-rainfall record |
+| GET / POST | `/api/farms/:farmId/water-availability` | FARMER (Owner) / ADMIN | Store explicit `stored`, `reliable_incoming`, `aggregate_available`, or `unknown` litres with measurement date |
+| PUT / DELETE | `/api/farms/:farmId/water-availability/:recordId` | FARMER (Owner) / ADMIN | Update or remove water inventory; aggregate/component double counting is rejected for the same date |
+| GET / POST | `/api/farms/:farmId/water-use-events` | FARMER (Owner) / ADMIN | Record irrigation/water-use timestamp, quantity/unit, method, measurement source, and provenance |
+| PUT / DELETE | `/api/farms/:farmId/water-use-events/:eventId` | FARMER (Owner) / ADMIN | Update or remove a farmer-owned water-use event |
+| GET / POST | `/api/farms/:farmId/financial-scenarios` | FARMER (Owner) / ADMIN | List or create separate farmer-entered low/medium/high financial scenarios |
+| PUT / DELETE | `/api/farms/:farmId/financial-scenarios/:scenarioId` | FARMER (Owner) / ADMIN | Update or remove a scenario; incomplete inputs remain stored but are not calculated |
 | GET | `/api/farms/:id/readings/latest` | FARMER (Owner) / ADMIN | Latest sensor readings and stale telemetry flags |
 | GET | `/api/alerts?farmId=...` | FARMER (Owner) / ADMIN | Active alerts for owned farm |
 | POST | `/api/alerts/:id/acknowledge` | FARMER (Owner) / ADMIN | Acknowledge alert on owned farm |
@@ -79,10 +91,13 @@ Server-side identity verification is enforced. Caller-supplied `x-agcro-role` he
 | GET | `/api/admin/decisions` | ADMIN | Read recorded decisions and separately labeled current recommendation/profit scenarios |
 | GET | `/api/admin/weather` | ADMIN | Weather observations with source/update time and separately calculated farm-level drought/flood risk |
 | GET | `/api/admin/health` | ADMIN | Safe API, storage, and integration configuration status; no secret values |
+| GET | `/api/admin/quality` | ADMIN | Filtered, paginated missing/stale/invalid/inconsistent/provenance findings and summary counts; scan is capped at 500 records per collection |
 | GET | `/api/admin/reports/:type.csv` | ADMIN | CSV export for `farmers`, `farms`, `devices`, `readings`, `alerts`, or `activities`; supports farm/farmer/date filters |
 | POST | `/api/admin/devices/:id/revoke` | ADMIN | Revoke a registered IoT device; credential material is not returned |
 
 All `/api/admin/*` routes require a verified JWT whose server-side account role is `ADMIN`. `x-agcro-role` is ignored. The shared `POST /api/alerts/:id/acknowledge` remains farm-scoped and can be used by the owning farmer or an admin.
+
+The quality response contains opaque farm/record IDs, stable issue codes, category/severity, affected field, timestamps, allowlisted scalar display values, and fixed remediation text. It omits contact details, free-text notes, credentials and token hashes. Filters include `farmId`, `zoneId`, `category`, `severity`, `recordType`, `dateFrom`, `dateTo`, `page`, and `pageSize`; the response reports truncation when the scan cap is reached.
 
 Device presence is derived from authenticated `LIVE_SENSOR` readings: a reading within 15 minutes (allowing up to five minutes of timestamp skew) is online, an older live reading is offline, and devices without such a reading are unverified. Seeded `status: online` and simulated readings do not establish online status. Global fallback weather is not presented as farm-specific; farm-level climate risks are displayed separately and are not changed by observation date filters. The development store has no administrative audit log, so administrative events are explicitly reported as unavailable. Exports omit password hashes, bearer tokens, and token hashes, and escape formula-leading text values.
 

@@ -1,7 +1,7 @@
 # Phase 4 Closure Audit and Implementation Plan
 
-**Audit date:** 2026-11-05  
-**Scope:** Close the remaining Phase 4 work without changing the Node.js/Express backend, Python calculation engine, vanilla frontend, storage architecture, authentication model, or existing safety gates.
+**Audit date:** 2026-11-06  
+**Scope:** Close Phase 4 within the existing Node.js/Express backend, Python calculation engine, vanilla frontend, JSON store, authentication model, and existing safety gates.
 
 ## Executive summary
 
@@ -22,15 +22,15 @@ No evidence was found in the repository of reviewed Maharashtra agronomic refere
 | Missing-data behavior | Missing measurements generally remain `null`/unknown. The engine validates input shape and rejects invalid numerical values; the service bounds process duration/output and sanitizes failures. | **Completed** |
 | Land Power | The score uses legacy provisional adjustments: baseline 60; pH 6.0–7.8 `+6`, otherwise `−7`; EC ≤4 dS/m `0`, above 4 `−10`; organic carbon ≥0.75% `+8`, <0.50% `−8`, otherwise 0; repeated adjacent crop name `−8`; Rain-fed `−4`; Drip `+3`; clamp 0–100. These rules are not supported by reviewed regional citations and do not constitute a standardized soil-health score. N/P/K are displayed but not scored. | **Requires external agronomic validation** |
 | Crop and rotation recommendations | The Python engine returns restoration, balanced, and profit-oriented categories but no ranked crop or suitability score. Rotation history only detects repeated adjacent crop names; it does not infer crop families or disease/nutrient relationships. The reference catalog is empty. | **Requires external agronomic validation** |
-| Water budget | The engine supports period-specific crop depth, effective rainfall, cultivated area, water availability, and supplied irrigation efficiency. It computes a depth-to-volume conversion and returns `insufficient_data` when the required bundle is incomplete. The current farm bundle does not supply the complete period inputs. | **Partially completed** |
-| Irrigation advice | The engine requires a fresh moisture reading and crop/stage-specific trigger, depth, root-zone, area, water and weather inputs before it returns an amount. It requires human confirmation and has no pump/valve control. Crop parameters are not yet reviewable/configurable through an approved regional catalog or farmer planning form. | **Partially completed** |
+| Water budget | The engine supports period-specific crop depth, effective rainfall, cultivated area, water availability, and supplied irrigation efficiency. Farmer-owned planning, rainfall, water inventory and water-use records are now captured and displayed, but the complete calculation bundle is not inferred from them. | **Partially completed; calculation gated** |
+| Irrigation advice | The engine requires a fresh moisture reading and crop/stage-specific trigger, depth, root-zone, area, water and weather inputs before it returns an amount. It requires human confirmation and has no pump/valve control. Crop-specific values remain unavailable pending reviewed references. | **Partially completed; calculation gated** |
 | Climate risk | The engine describes observations and may identify a potential water shortage, but does not calculate calibrated drought, flood, or waterlogging scores. No regional thresholds or model are configured. | **Requires external agronomic validation** |
 | Historical finance | Recorded revenue uses known yield and selling price; unknown values remain null. Net profit requires itemized costs and `expensesComplete: true`. Demo-mode values are separated from actual farm values. New/updated records no longer default a missing season or year. | **Partially completed** |
 | Soil-test input integrity | Farmer entries now preserve a nullable value, parameter-specific unit, test method and date. Invalid units/ranges/dates are rejected at the API boundary. Legacy values with missing or incompatible method/unit remain visible with quality warnings and are excluded from the provisional Land Power indicator. | **Partially completed** |
-| Future finance | The engine accepts a `financialScenarios` input shape, but the current Express farm bundle and farmer forms do not collect/persist explicit low/medium/high scenarios. Future estimates therefore remain unavailable. | **Not implemented** |
-| Farmer Farm Memory | The current farmer page displays crop/season entries, activities, dated soil tests, decisions, a provisional Land Power result, and missing-data labels. Existing APIs support creating/updating activities, soil tests, and harvest/season records. The engine returns soil observations in `historicalChanges`, but the UI uses `land.trend` (currently empty) rather than rendering those observations as a per-parameter trend. Water use is only indirectly recorded as a generic activity, not as a structured water record. | **Partially completed** |
-| Admin data quality | The admin decisions API computes scenario summaries and returns `missingInputs`, calculation version/time, and counts of related records. There is no dedicated quality view categorizing missing, stale, invalid, or inconsistent data, and no record-level quality findings contract. | **Partially completed** |
-| Dynamic multilingual explanations | English, Marathi, and Hindi locale catalogs exist and standard engine notices are localized in the farmer UI. Some engine prose is generated dynamically in Python, including values embedded in sentences. The farmer UI relies on exact string lookup for some dynamic data and replaces selected reason lists with generic localized notices. Admin static copy is localized, but variable engine text still depends on exact-string mapping/status handling. | **Partially completed** |
+| Future finance | Low/medium/high farmer-entered scenarios have validated farm-owned CRUD routes and forms. Only complete scenarios with explicit yield, price, non-empty itemized costs and confirmation enter calculation; incomplete scenarios remain unknown and uncalculated. | **Completed** |
+| Farmer Farm Memory | The memory view now includes a filtered timeline, crop plans, dated soil trends separated by unit/method, planning periods, effective rainfall, water availability/use and separately labeled actual/demo/scenario finance. | **Completed** |
+| Admin data quality | `/api/admin/quality` and the admin dashboard provide bounded, filterable, paginated missing/stale/invalid/inconsistent/provenance findings and summary counts. Findings contain only safe identifiers, allowlisted values and fixed remediation text. | **Completed** |
+| Dynamic multilingual explanations | Engine modules now return stable `engine.*` codes and typed params for decision reasons; en/mr/hi templates share code/placeholder parity and are used in farmer recommendation, irrigation and risk views. Numeric values remain engine output, not locale-specific calculations. | **Completed for rendered decision explanations** |
 | Security and compatibility | Farmer farm APIs use authentication and farm ownership checks. Admin decision/report surfaces require authenticated admin identity. The project continues to use Express, Python, vanilla frontend code, and the current store; no database integration is needed for closure. | **Completed** |
 
 ### Relevant current implementation
@@ -43,16 +43,16 @@ No evidence was found in the repository of reviewed Maharashtra agronomic refere
 
 ## 2. Missing functionality
 
-1. No reviewed, regionally scoped crop/soil/water/risk reference records or enabled approval workflow.
-2. No end-to-end farmer input path for active-crop water demand, planning period, daily effective rainfall, irrigation trigger/depth/root-zone inputs, or planning scenarios.
-3. Farm profile currently captures area, water source, irrigation method, optional efficiency, and optional available water. These alone are insufficient to complete the engine's period-specific water calculation.
-4. No structured active-crop-plan API/form covering crop, season, growth stage, zone, dates, and reference-backed parameters. Zone records have free-text current crop and growth stage, but these are not the complete `activeCrops` calculation contract.
+1. No reviewed, regionally scoped crop/soil/water/risk reference records or enabled approval workflow; all reference-dependent rankings and calibrated scores remain disabled.
+2. Crop plans, planning periods, effective rainfall, explicit water inventory and low/medium/high scenarios now have farmer UI/API paths, but no crop water requirement, irrigation trigger/depth/root-zone parameter is inferred or included without reviewed evidence.
+3. Planning records are persisted and visible in Farm Memory. The water calculation remains unavailable unless the engine receives a complete period-specific calculation bundle; total rainfall and unknown water are never substituted.
+4. Crop plan UI/API covers crop, season, growth stage, zone and dates; reference-backed water parameters remain intentionally absent.
 5. **Resolved in Phase 4.1:** harvest/season create/edit accepts unknown season, year, yield and selling price as null; the form no longer requires unknown yield/price and does not default the season/year. Incomplete records are labeled in Farm Memory. Actual, demonstration and estimate separation remains in the engine.
 6. **Resolved in Phase 4.1 for new writes:** soil input uses parameter-specific unit choices, captures method, permits an unknown value, validates known parameter ranges and valid dates, and warns about missing/incompatible legacy method/unit. The provisional indicator skips values without compatible units and a recorded method. Legacy raw soil records remain readable.
-7. Future low/medium/high financial scenarios are not persisted or entered.
-8. Farm Memory does not render the engine's dated soil `historicalChanges` data as trend charts/tables, and does not provide structured water-use history.
-9. Admin quality data is a missing-input list/count, not a quality finding model. Staleness, invalidity, cross-record inconsistency, and actionable provenance are not separately reported.
-10. Engine-generated sentences and interpolation are not a stable multilingual contract. Some English prose may appear in localized screens or be replaced by a generic sentence that hides the specific reason.
+7. **Resolved:** explicit farmer-entered low/medium/high financial scenarios are persisted separately and only complete scenarios are calculated.
+8. **Resolved:** Farm Memory renders per-parameter dated soil history and structured crop, planning, rainfall, water-use and financial records with filters and provenance.
+9. **Resolved:** admin quality has bounded issue scans, categories, pagination, filters, safe display values and remediation.
+10. **Resolved for rendered decision explanations:** Python returns locale-neutral code/parameter messages; en/mr/hi templates are parity-tested and farmer screens render them without changing calculation values.
 
 ## 3. Relevant files and APIs
 
@@ -60,18 +60,22 @@ No evidence was found in the repository of reviewed Maharashtra agronomic refere
 
 | Endpoint | Current role in Phase 4 | Closure impact |
 |---|---|---|
-| `GET /api/dashboard?farmId=...` and `GET /api/farms/:id` | Return farm bundle, records, and Python decision results after ownership verification. | Continue as the read model; add newly persisted planning inputs and quality metadata to the same farm-scoped bundle. |
+| `GET /api/dashboard?farmId=...` and `GET /api/farms/:id` | Return farm bundle, structured planning records, and Python decision results after ownership verification. | Existing read model; planning, rainfall, water, and scenario records are included in the farm-scoped bundle. |
 | `POST/PUT /api/farms`, `PUT /api/farms/:id` | Store farm name, area, soil type, water source, irrigation method, efficiency, available water, and location. | Reuse for farm-wide stable facts; do not make users re-enter them for each decision. |
-| `POST /api/zones`, `PUT /api/zones/:id`, `GET /api/farms/:id/zones` | Store zones and their area, soil, current crop and growth-stage context. | Extend with a zone-scoped active crop plan rather than overloading free-text zone fields. |
+| `POST /api/zones`, `PUT /api/zones/:id`, `GET /api/farms/:id/zones` | Store zones and their area, soil, current crop and growth-stage context. | Zone-scoped crop plans use separate routes; free-text zone fields are not treated as full plans. |
 | `GET /api/recommendations`, `GET /api/water-budget`, `GET /api/irrigation-advice`, `GET /api/climate-risks`, `GET /api/profit-analysis` | Return farm-scoped calculation results; no planning input is submitted through these GET routes. | Keep reads side-effect-free where practical; add authenticated write routes for planning inputs rather than encoding them in query parameters. |
 | `POST/PUT /api/soil-tests`, `POST/PUT /api/activities`, `POST/PUT /api/harvests` | Store farmer-owned history with validation. | Soil method/unit and nullable value; harvest optional season/year/yield/price; nullable activity quantity. Existing auth and ownership checks are unchanged. |
+| `/api/farms/:farmId/crop-plans`, `/planning-periods`, `/effective-rainfall` | Farmer-owned structured crop/planning/rainfall record CRUD. | Unit/date/provenance validation and links are checked; period deletion is protected when rainfall records reference it. |
+| `/api/farms/:farmId/water-availability`, `/water-use-events` | Farmer-owned water inventory and structured water-use CRUD. | Explicit type/unit/date/timestamp; aggregate/component double counting is rejected for a farm/date. |
+| `/api/farms/:farmId/financial-scenarios` | Farmer-owned low/medium/high scenario CRUD. | Incomplete scenarios are preserved but excluded from engine calculations. |
 | `GET /api/weather` | Returns weather observations/forecast from the existing adapter/store. | A weather record must not be treated as effective rainfall without a source/method that explicitly supports that interpretation. |
 
 ### Existing admin endpoints
 
 - `GET /api/admin/decisions` is authenticated and admin-only. It returns decision records and per-farm scenario summaries with engine `missingInputs`, calculation version/time, and counts of zones, soil tests, seasons, activities, and data sources.
-- `GET /api/admin/health` and the existing admin dashboard provide operational health/integration information, not detailed per-record quality findings.
-- `GET /api/admin/farms/:id` is admin-only and returns a farm record. Any future quality endpoint must preserve admin authorization and avoid returning credentials or unnecessary personal data.
+- `GET /api/admin/quality` is admin-only and returns bounded, paginated/filterable data-quality issues and summary counts without free-text notes or contact data.
+- `GET /api/admin/health` and the admin dashboard provide operational health/integration information.
+- `GET /api/admin/farms/:id` is admin-only and returns a farm record; credentials and unnecessary personal data are excluded from quality findings.
 
 ## 4. Required agricultural references
 
@@ -173,20 +177,18 @@ The actual schema may be split into reference values and separate rules, but mus
 
 ## 6. Farm Memory and admin data-quality UI changes
 
-### Farmer-facing Farm Memory
+### Farmer-facing Farm Memory (implemented)
 
-Keep the existing vanilla route and data model; expand the current memory view rather than introducing a framework or database.
-
-1. **Crop and season timeline:** show crop, zone, season/year, planted/harvested dates, variety (as recorded), source, missing fields and edit action. Do not treat blank fields as known.
-2. **Soil history:** render `landPower.historicalChanges` as separate dated series per parameter, with unit, lab/source and method. Never plot incomparable units as a continuous line. Keep the score clearly marked provisional; do not use yield-derived historic scores.
-3. **Water history:** add structured farmer-entered/observed irrigation events (date, zone, volume or depth, unit, source, method and notes) or explicitly label existing activities as unstructured notes. No historic water balance should be inferred without complete inputs.
-4. **Financial history:** show actual revenue/profit only when inputs and expense-completeness conditions are met; visually separate actual, demonstration and scenario estimates.
-5. **Plan context:** show active crop plans and their saved inputs, allowing update-in-place. Display which required calculation inputs are missing and where the farmer can enter them.
-6. **Access:** farmer views remain scoped to verified owned farm IDs; all edits use existing authenticated write paths or new equivalents with server-side ownership checks.
+1. **Crop and season timeline:** implemented with crop, zone, season/year, dates, source, missing fields, filters and edit actions. Unknown values stay blank/unknown.
+2. **Soil history:** `landPower.historicalChanges` is shown as separate dated series by parameter, unit and method/source. The score remains provisional.
+3. **Water history:** structured planning periods, effective rainfall, water inventory and use events have authenticated farmer-owned CRUD and Farm Memory surfaces. No historic water balance is inferred.
+4. **Financial history:** actual, demonstration and scenario data are separate; only complete confirmed inputs are calculated.
+5. **Plan context:** active/planned crop plans and planning records are visible/editable; unsupported crop parameters remain missing rather than inferred.
+6. **Access:** all farm edits use authenticated routes with server-side ownership checks.
 
 ### Admin data-quality interface
 
-Add a section under the existing admin decisions/system-health surface. It should summarize quality by farm and allow authorized admins to drill into actionable issue categories:
+The dedicated `/api/admin/quality` endpoint and admin dashboard section summarize bounded scans and allow authorized admins to filter actionable issue categories:
 
 - **Missing:** required plan fields absent; incomplete rainfall period; no soil test; no season/history; missing source/method.
 - **Stale:** sensor readings beyond the documented freshness window; expired forecasts/plans/reference records.
@@ -194,13 +196,13 @@ Add a section under the existing admin decisions/system-health surface. It shoul
 - **Inconsistent:** zone-area totals vs farm area; crop plan without matching zone/season; duplicate/overlapping period records; unit/source conflicts; impossible date ordering.
 - **Provenance/reference:** unknown source, unreviewed reference, out-of-region or out-of-season reference. Such findings must block dependent calculations rather than merely warn.
 
-Expose only the minimum fields needed for administration: opaque record/farm IDs, issue code, severity, affected field, timestamps, safe display values, remediation hint, and calculation/reference version. Do not return password hashes, passwords, JWTs, sensor bearer credentials/token hashes, or unnecessary personal data. Admin APIs must retain `auth` plus `requireAdmin`; farmer APIs must continue to verify ownership. Paginate/filter the result and avoid making a global unbounded scan on every dashboard request.
+The response exposes opaque record/farm IDs, issue code, severity, affected field, timestamps, allowlisted scalar display values, and fixed remediation hints. It omits free-text notes and contact data, credentials, JWTs, and token hashes. The route requires `auth` plus `requireAdmin`, supports filters and pagination, and caps each scanned collection at 500 records with truncation metadata. Farmer APIs continue to verify ownership.
 
 ## 7. Dynamic multilingual explanation design
 
-### Current issue
+### Implemented contract
 
-The locale files contain standard engine notices in `engine` and exact data/status labels. `public/app.js` uses `dataLabel`/`localizedDataText` to match returned strings and replaces some engine reasons with generic localized messages. Python also constructs variable English prose such as a measured value/source or crop/stage inside the sentence. Exact sentence lookup is brittle, and whole-sentence replacement can discard useful evidence.
+Python decision modules include stable `engine.*` message codes and typed params alongside legacy English reason strings. The farmer UI resolves these codes through `engineMessages` templates and safely interpolates data values; legacy numeric results are not localized or changed. English, Marathi, and Hindi catalogs are checked for matching code sets and named placeholders. Unknown message codes render a localized “explanation unavailable” notice rather than raw Python prose.
 
 ### Proposed response and translation-key structure
 
@@ -208,31 +210,21 @@ Keep calculations and numeric outputs in Python and return locale-neutral struct
 
 ```json
 {
-  "code": "sensor_reading_stale",
-  "params": { "ageSeconds": 5400, "source": "LIVE_SENSOR" },
-  "field": "sensorReadings",
-  "severity": "warning"
+  "code": "engine.sensor.moisture_recorded",
+  "params": { "moisturePct": 20.0, "source": "LIVE_SENSOR" }
 }
 ```
 
-Use versioned namespaces, for example:
-
-- `engine.messages.sensor_reading_stale`
-- `engine.messages.effective_rainfall_missing`
-- `engine.messages.crop_reference_unapproved`
-- `engine.messages.water_budget_insufficient`
-- `engine.messages.land_power_provisional`
-- `engine.messages.translation_unavailable`
+Use the version-controlled `engine.*` namespaces defined by the Python engine and locale catalogs.
 
 Each code has English, Marathi, and Hindi templates with named parameters. Numeric values remain numbers until the frontend formats them with the active locale; crop names, variety names, IDs, units, institution names, and technical terms are preserved or explicitly cataloged. Do not translate a crop name unless a reviewed canonical name/alias mapping exists.
 
 ### Fallback and parity rules
 
-1. Resolve the active language key; if absent, use the English template for the same stable key.
-2. If the English key is absent or parameters cannot be safely formatted, show a localized generic “explanation unavailable” message and retain the result's status/required-input information.
-3. In development/tests, report missing translation keys; do not silently fall back to displaying raw Python prose as a success-shaped translation.
-4. Test that all locales have the same message-code structure and placeholders, and that numbers/status/result values are identical across language selections.
-5. Keep stable machine-readable `missingInputCodes`/`reasonCodes` separate from any temporary legacy text while clients are migrated. Remove exact dynamic-string matching only after all known consumers use the structured contract.
+1. The selected language resolves the exact code; if unavailable, show the localized explanation-unavailable text and retain result/status/input information.
+2. Development tests require equal code structure and placeholders across all locales.
+3. Numeric values remain typed engine params and are interpolated as data; locale selection does not rerun or alter calculations.
+4. Legacy `reasons` remain temporarily for API compatibility; farmer-facing reason views use structured messages.
 
 ## 8. Security and compatibility considerations
 
@@ -278,16 +270,16 @@ Each code has English, Marathi, and Hindi templates with named parameters. Numer
 
 ## 10. Implementation order, risks and unresolved questions
 
-### Recommended order
+### Status and remaining gate
 
-1. **Contract and data audit (immediate):** inventory store schemas and current seed data; define nullable fields, units, provenance, source IDs, crop-plan ownership, planning-window semantics, quality issue codes, and migration-free in-memory record formats. Fix blank season/year/finance defaults in the API/form contract with regression tests.
-2. **Input and history foundation (immediate):** add authenticated, ownership-checked crop-plan and planning-period CRUD; add structured water events and optional financial scenario records; reuse existing farm, zone, soil, season, activity and harvest records. Add server validators and update existing farm bundle.
-3. **Farmer UI (immediate):** add/update farm/zone planning forms and Farm Memory timeline/soil-history rendering. Clearly label unvalidated or farmer-entered values; keep calculations unavailable while evidence is incomplete.
-4. **Admin data quality (immediate):** add a bounded admin-only quality summary/detail API and dashboard view using issue codes and non-sensitive safe metadata. Do not infer invalidity from absence of a threshold.
-5. **Message contract (immediate):** add stable reason/missing-input codes and three locale message catalogs; migrate farmer/admin display to typed message rendering, fallback and parity checks. Keep engine numeric values locale-neutral.
-6. **Reference curation (external review gate):** select actual publications/datasets with local agricultural experts; collect precise citations, units, methods, applicable regions, crop/season/stage context, limitations and approval records. No ranking/scoring feature advances before this gate.
-7. **Calculation implementation (after approval):** add only the reviewed rule/reference records and tests; enable each calculation independently behind reference status/version gates. Pilot against expert-reviewed examples before turning on for users.
-8. **Closure verification:** run full `pnpm test` and `pnpm python:test`, focused API/UI flows, role/ownership and security regression checks, language parity checks, and confirm withheld outputs remain null for incomplete evidence.
+1. **Completed:** input audit and nullable/unit/provenance contracts; unknown historical fields remain unknown.
+2. **Completed:** authenticated farm-owned crop-plan, planning-period, effective-rainfall, water inventory/use, and financial-scenario CRUD with validation and related-record deletion safeguards.
+3. **Completed:** farmer Farm Memory timeline, filters, comparable soil history, planning/water records, and distinct actual/demo/scenario finance.
+4. **Completed:** bounded admin-only data-quality endpoint and localized dashboard with filters, pagination, safe display values and remediation.
+5. **Completed:** stable engine message codes, en/mr/hi templates, placeholder parity checks, and numeric-invariance checks.
+6. **Remaining external gate:** curate regionally relevant sources with agricultural experts; include exact citations, units, methods, geographic/crop/season/stage applicability, limitations and approvals.
+7. **Blocked by review:** activate only reviewed crop-ranking, irrigation, soil scoring, or climate-risk rules. Until then, those outputs remain unavailable or explicitly provisional.
+8. **Verification:** run full Node and Python suites, targeted ownership/admin/validation tests, locale checks and confirm calculations remain gated without complete evidence.
 
 ### Risks
 

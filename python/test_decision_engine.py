@@ -140,6 +140,22 @@ class DecisionEngineTests(unittest.TestCase):
         self.assertIsNone(profit["future"]["expected"])
         self.assertFalse(profit["future"]["available"])
 
+    def test_profit_scenarios_require_explicit_yield_price_and_complete_costs(self):
+        payload = dict(self.payload)
+        payload["activeCrops"] = [{"crop":"Chickpea"}]
+        payload["financialScenarios"] = [
+            {"crop":"Chickpea", "label":"low", "yieldQuintal":10, "pricePerQuintal":100,
+             "expenses":{"seed":20}, "expensesComplete":False, "source":"FARMER_ENTERED"},
+            {"crop":"Chickpea", "label":"medium", "yieldQuintal":10, "pricePerQuintal":100,
+             "expenses":{"seed":None}, "expensesComplete":True, "source":"FARMER_ENTERED"},
+            {"crop":"Chickpea", "label":"high", "yieldQuintal":10, "pricePerQuintal":100,
+             "expenses":{"seed":0, "labour":20}, "expensesComplete":True, "source":"FARMER_ENTERED"},
+        ]
+        profit = calculate(payload)["profit"]
+        self.assertEqual(len(profit["future"]["scenarios"]), 1)
+        self.assertEqual(profit["future"]["scenarios"][0]["label"], "high")
+        self.assertEqual(profit["future"]["scenarios"][0]["profit"], 980)
+
     def test_nullable_historical_inputs_stay_unknown_and_explicit_zero_stays_zero(self):
         payload = dict(self.payload)
         payload["seasons"] = [
@@ -180,6 +196,24 @@ class DecisionEngineTests(unittest.TestCase):
                          ["uninterpretable", "uninterpretable", "uninterpretable"])
         self.assertIsNone(land["indicators"][0]["method"])
 
+    def test_soil_history_keeps_incompatible_units_and_methods_in_separate_series(self):
+        payload = {
+            "farm": {}, "seasons": [], "zones": [], "activities": [],
+            "activeCrops": [], "sensorReadings": [], "weather": [],
+            "soilTests": [
+                {"parameter": "EC", "value": 1.2, "unit": "dS/m", "method": "Method A", "date": "2026-01-01"},
+                {"parameter": "EC", "value": 1.3, "unit": "mS/cm", "method": "Method A", "date": "2026-02-01"},
+                {"parameter": "EC", "value": 1.4, "unit": "dS/m", "method": "Method B", "date": "2026-03-01"},
+            ],
+        }
+        series = calculate(payload)["landPower"]["historicalChanges"]
+        ec_series = [item for item in series if item["parameter"] == "EC"]
+        self.assertEqual(len(ec_series), 3)
+        self.assertEqual(
+            {(item["unit"], item["method"]) for item in ec_series},
+            {("dS/m", "Method A"), ("mS/cm", "Method A"), ("dS/m", "Method B")},
+        )
+
     def test_demo_records_are_never_returned_as_actual_farm_finances(self):
         payload = dict(self.payload)
         payload.update({"dataMode": "DEMO_DATA", "seasons": [{
@@ -210,6 +244,23 @@ class DecisionEngineTests(unittest.TestCase):
         self.assertTrue(all(item["score"] is None for item in risks))
         self.assertEqual(risks[1]["level"], "unassessed")
         self.assertIn("official flood warning", risks[1]["confidence"]["explanation"])
+
+    def test_engine_message_codes_are_locale_neutral_and_keep_numeric_params(self):
+        english = calculate({**self.payload, "language": "en"})
+        marathi = calculate({**self.payload, "language": "mr"})
+        moisture_message = next(
+            item for item in english["irrigation"]["messages"]
+            if item["code"] == "engine.sensor.moisture_recorded"
+        )
+        self.assertEqual(moisture_message["params"], {"moisturePct": 20.0, "source": "LIVE_SENSOR"})
+        self.assertEqual(english["irrigation"]["messages"], marathi["irrigation"]["messages"])
+        self.assertEqual(
+            english["irrigation"]["recommendationMessage"]["code"],
+            "engine.irrigation.water_insufficient",
+        )
+        for module in [english["landPower"], english["farmMemory"], *english["risks"]]:
+            self.assertTrue(all(item["code"].startswith("engine.") for item in module["messages"]))
+            self.assertTrue(all(isinstance(item["params"], dict) for item in module["messages"]))
 
 
 if __name__ == "__main__":

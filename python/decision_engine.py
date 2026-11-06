@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 import json
 import math
 from pathlib import Path
+import re
 import sys
 from typing import Any
 
@@ -26,6 +27,67 @@ LAND_POWER_ASSUMPTIONS = [
 
 class InputError(ValueError):
     """Raised when the engine contract contains invalid values."""
+
+
+def _engine_messages(reasons: list[str]) -> list[dict[str, Any]]:
+    codes = {
+        "The two latest recorded seasons repeat the same crop name (provisional indicator).":
+            ("engine.crop_history.repeated_crop", {}),
+        "Rain-fed water source is recorded; this is a provisional variability indicator.":
+            ("engine.water.rain_fed_source", {}),
+        "Drip irrigation is recorded; this is a provisional management indicator.":
+            ("engine.irrigation.drip_recorded", {}),
+        "Historical crop names are summarized without assuming crop-family or disease relationships.":
+            ("engine.rotation.names_only", {}),
+        "The latest sensor reading is stale and is excluded from the decision.":
+            ("engine.sensor.stale_excluded", {}),
+        "No usable soil-moisture reading is available; missing moisture is not treated as zero.":
+            ("engine.sensor.moisture_missing", {}),
+        "Recorded available water is below the calculated gross requirement.":
+            ("engine.water.below_gross_requirement", {}),
+        "Supplied-input water budget indicates a potential water shortage; this is not an official drought classification.":
+            ("engine.risk.potential_water_shortage", {}),
+        "Stale soil-moisture readings are excluded.":
+            ("engine.risk.stale_moisture_excluded", {}),
+        "A soil-moisture observation is available; no validated stress threshold is configured.":
+            ("engine.risk.moisture_threshold_unvalidated", {}),
+        "Rainfall records are available; no regional rainfall-deficit baseline is configured.":
+            ("engine.risk.rainfall_baseline_unvalidated", {}),
+        "No validated local flood or waterlogging model is configured.":
+            ("engine.risk.flood_model_unavailable", {}),
+        "Forecast rainfall is reported as an input observation only; no risk threshold is applied.":
+            ("engine.risk.forecast_observation_only", {}),
+    }
+    messages = []
+    for reason in reasons:
+        message = codes.get(reason)
+        if message is None:
+            match = re.fullmatch(r"(.+) contributes a provisional positive indicator\.", reason)
+            if match:
+                message = ("engine.soil.provisional_positive", {"parameter": match.group(1)})
+            else:
+                match = re.fullmatch(r"(.+) triggers a provisional attention indicator\.", reason)
+                if match:
+                    message = ("engine.soil.provisional_attention", {"parameter": match.group(1)})
+                else:
+                    match = re.fullmatch(
+                        r"Latest soil moisture is (-?\d+(?:\.\d+)?)% from (.+)\.", reason
+                    )
+                    if match:
+                        message = ("engine.sensor.moisture_recorded", {
+                            "moisturePct": float(match.group(1)), "source": match.group(2)
+                        })
+                    else:
+                        match = re.fullmatch(r"Recorded crop and stage: (.+) / (.+)\.", reason)
+                        if match:
+                            message = ("engine.crop.stage_recorded", {
+                                "crop": match.group(1), "stage": match.group(2)
+                            })
+        if message is None:
+            raise RuntimeError(f"No stable engine message code is registered for: {reason}")
+        code, params = message
+        messages.append({"code": code, "params": params})
+    return messages
 
 
 def _object(value: Any, label: str) -> dict[str, Any]:
@@ -156,6 +218,7 @@ def _module(result: dict[str, Any], status: str, reasons: list[str],
         "result": result,
         **direct_result,
         "reasons": reasons,
+        "messages": _engine_messages(reasons),
         "assumptions": assumptions,
         "missingInputs": missing,
         "confidence": confidence,
@@ -214,14 +277,14 @@ def _land_power(payload: dict[str, Any], generated_at: str) -> dict[str, Any]:
         if parameter == "pH" and recorded_unit == "unitless":
             recorded_unit = ""
         method = row.get("method")
-        if recorded_unit != expected_unit:
+        if recorded_unit != expected_unit or not isinstance(method, str) or not method.strip():
             missing.append(f"{label} measurement method or compatible unit")
             indicators.append({
                 "parameter": label, "value": float(row["value"]),
                 "unit": row.get("unit") or None, "measuredAt": row.get("date") or None,
                 "source": row.get("source") or "UNKNOWN", "method": method or None,
                 "status": "uninterpretable",
-                "explanation": "The measurement is retained, but its unit is not compatible with this provisional indicator.",
+                "explanation": "The measurement is retained, but its method or unit is not compatible with this provisional indicator.",
             })
             continue
         value = float(row["value"])
@@ -293,17 +356,24 @@ def _land_power(payload: dict[str, Any], generated_at: str) -> dict[str, Any]:
                  and row.get("unit")))
     )
     score = max(0, min(100, round(score)))
-    trend = []
+    trend_by_context: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for parameter in ("pH", "EC", "Organic carbon", "N", "P", "K"):
         rows = [row for row in soil_tests if aliases.get(
             str(row.get("parameter", "")).strip().lower()) == parameter]
-        rows.sort(key=lambda row: str(row.get("date") or ""))
-        if rows:
-            trend.append({"parameter": parameter, "observations": [
-                {"date": row.get("date"), "value": row.get("value"),
-                 "unit": row.get("unit") or None, "source": row.get("source") or "UNKNOWN"}
-                for row in rows
-            ]})
+        for row in rows:
+            method = row.get("method") if isinstance(row.get("method"), str) else ""
+            unit = row.get("unit") or ""
+            context = (parameter, unit, method.strip())
+            trend_by_context.setdefault(context, []).append({
+                "date": row.get("date"), "value": row.get("value"),
+                "unit": unit or None, "method": method.strip() or None,
+                "source": row.get("source") or "UNKNOWN",
+            })
+    trend = [
+        {"parameter": parameter, "unit": unit or None, "method": method or None,
+         "observations": sorted(observations, key=lambda row: str(row.get("date") or ""))}
+        for (parameter, unit, method), observations in trend_by_context.items()
+    ]
     missing.extend(label for label in ("Soil texture", "Crop rotation family data")
                    if label == "Soil texture" and not farm.get("soilType"))
     result = {
@@ -379,6 +449,8 @@ def _recommendations(payload: dict[str, Any], generated_at: str) -> list[dict[st
             "suitabilityScore": None,
             "reasons": ["No candidate can be ranked until reviewed regional references and decision rules are configured."],
             "risks": ["Recommendations are intentionally withheld; no candidate has passed essential-constraint checks."],
+            "messages": [{"code": "engine.recommendations.withheld", "params": {}}],
+            "riskMessages": [{"code": "engine.recommendations.risk_checks_unavailable", "params": {}}],
             "soilCompatibility": None,
             "waterRequirementMm": None,
             "season": None,
@@ -595,6 +667,7 @@ def _irrigation(payload: dict[str, Any], generated_at: str) -> dict[str, Any]:
     depth = None
     volume = None
     recommendation = "Measure soil moisture and confirm crop, root-zone, and water information before deciding."
+    recommendation_message = {"code": "engine.irrigation.measure_inputs", "params": {}}
     urgency = "unassessed"
     reasons = []
     if reading and stale:
@@ -615,13 +688,16 @@ def _irrigation(payload: dict[str, Any], generated_at: str) -> dict[str, Any]:
                 depth = None
                 volume = None
                 recommendation = "Calculated requirement exceeds recorded available water; no irrigation quantity is provided."
+                recommendation_message = {"code": "engine.irrigation.water_insufficient", "params": {}}
                 urgency = "insufficient_water"
                 reasons.append("Recorded available water is below the calculated gross requirement.")
             else:
                 recommendation = "Supplied crop-specific trigger is met; review the calculated depth and confirm in the field."
+                recommendation_message = {"code": "engine.irrigation.trigger_met", "params": {}}
                 urgency = "review_required"
         else:
             recommendation = "Supplied crop-specific trigger is not met; continue monitoring."
+            recommendation_message = {"code": "engine.irrigation.trigger_not_met", "params": {}}
             urgency = "monitor"
     recent_irrigation = max(
         (item for item in activities if str(item.get("type", "")).casefold() == "irrigation"),
@@ -630,6 +706,7 @@ def _irrigation(payload: dict[str, Any], generated_at: str) -> dict[str, Any]:
     )
     result = {
         "recommendation": recommendation,
+        "recommendationMessage": recommendation_message,
         "timing": urgency,
         "urgency": urgency,
         "irrigationDepthMm": depth,
@@ -730,6 +807,7 @@ def _climate_risks(payload: dict[str, Any], water: dict[str, Any],
         {
             "status": "success", "result": {}, "type": "drought", "level": drought_level,
             "score": None, "affectedZones": [], "reasons": drought_reasons,
+            "messages": _engine_messages(drought_reasons),
             "actions": ["Check fresh soil moisture by zone.", "Review measured water availability and the planning-period water budget."],
             "missingInputs": drought_missing, "confidence": _confidence(
                 sum([rain_known, freshness == "fresh", water.get("decisionStatus") != "insufficient_data",
@@ -742,6 +820,7 @@ def _climate_risks(payload: dict[str, Any], water: dict[str, Any],
         {
             "status": "success", "result": {}, "type": "flood_waterlogging", "level": flood_level,
             "score": None, "affectedZones": [], "reasons": flood_reasons,
+            "messages": _engine_messages(flood_reasons),
             "actions": ["Inspect low-lying areas after heavy rainfall.", "Review field drainage and waterlogging history."],
             "missingInputs": flood_missing, "confidence": _confidence(
                 sum([bool(rain_forecast), drainage_known, topography_known, waterlogging_history_known]), 4,
@@ -830,7 +909,8 @@ def _profit(payload: dict[str, Any], generated_at: str) -> dict[str, Any]:
         yield_value = scenario.get("yieldQuintal")
         price = scenario.get("pricePerQuintal")
         expenses = scenario.get("expenses")
-        if yield_value is None or price is None or expenses is None:
+        if (yield_value is None or price is None or not isinstance(expenses, dict)
+                or not expenses or scenario.get("expensesComplete") is not True):
             continue
         scenario_expenses = [
             _optional_number(value, "financialScenario.expenses", 0)
@@ -841,7 +921,7 @@ def _profit(payload: dict[str, Any], generated_at: str) -> dict[str, Any]:
         cost = sum(scenario_expenses)
         revenue = float(yield_value) * float(price)
         future_scenarios.append({
-            "label": scenario.get("label") or "user_supplied",
+            "recordId": scenario.get("id"), "label": scenario.get("label") or "user_supplied",
             "crop": scenario.get("crop"), "yieldQuintal": float(yield_value),
             "pricePerQuintal": float(price), "expenses": cost,
             "revenue": revenue, "profit": revenue - cost,

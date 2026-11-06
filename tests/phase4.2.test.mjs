@@ -194,3 +194,82 @@ test('Phase 4.2 stores structured crop plans, planning periods, rainfall and wat
   });
   assert.equal(invalidOverlap.status, 409);
 });
+
+test('water records require explicit units and timestamps and prevent aggregate double counting', async () => {
+  const client = createTestClient();
+  const headers = { Authorization:`Bearer ${await login(client)}` };
+  const farmId = 'farm-1';
+  const postWater = (body) => client.post(`/api/farms/${farmId}/water-availability`, { headers, body });
+
+  const missingType = await postWater({ availableWaterLitres:500, unit:'litres', measurementDate:'2026-11-05' });
+  assert.equal(missingType.status, 400);
+  const component = await postWater({ waterType:'stored', availableWaterLitres:500, unit:'litres', measurementDate:'2026-11-05' });
+  assert.equal(component.status, 201);
+  const aggregate = await postWater({ waterType:'aggregate_available', availableWaterLitres:900, unit:'litres', measurementDate:'2026-11-05' });
+  assert.equal(aggregate.status, 409);
+  assert.equal((await aggregate.json()).error, 'water_availability_double_count');
+
+  const missingTimestamp = await client.post(`/api/farms/${farmId}/water-use-events`, {
+    headers,
+    body:{ waterQuantity:10, quantityUnit:'litres', applicationMethod:'Drip', sourceOfMeasurement:'Farmer record' }
+  });
+  assert.equal(missingTimestamp.status, 400);
+});
+
+test('financial scenarios preserve unknowns and only calculate with complete explicit inputs', async () => {
+  const client = createTestClient();
+  const headers = { Authorization:`Bearer ${await login(client)}` };
+  const farmId = 'farm-1';
+  const planResponse = await client.post(`/api/farms/${farmId}/crop-plans`, {
+    headers,
+    body:{
+      zoneId:'zone-1', crop:'Millet', variety:null, season:null, agriculturalYear:null,
+      sowingDate:'2026-11-06', expectedHarvestDate:'2027-03-01', cultivatedArea:1,
+      areaUnit:'acre', recordSource:'FARMER_ENTERED', status:'active'
+    }
+  });
+  assert.equal(planResponse.status, 201);
+  const plan = (await planResponse.json()).data;
+  const endpoint = `/api/farms/${farmId}/financial-scenarios`;
+  const create = (scenario) => client.post(endpoint, { headers, body:{ ...scenario, cropPlanId:plan.id, crop:'Millet' } });
+
+  const incomplete = await create({
+    scenario:'low', expectedYieldQuintal:null, yieldUnit:'quintal_total', pricePerQuintal:null,
+    currency:'INR', costUnit:'INR_total', expenses:null, expensesComplete:false, assumptions:[],
+    source:'FARMER_ENTERED'
+  });
+  assert.equal(incomplete.status, 201);
+  assert.equal((await incomplete.json()).data.expectedYieldQuintal, null);
+  let dashboard = (await (await client.get(`/api/dashboard?farmId=${farmId}`, { headers })).json()).data;
+  assert.equal(dashboard.profit.future.scenarios.some((item) => item.crop === 'Millet'), false);
+
+  const complete = await client.put(`${endpoint}/${(await incomplete.json()).data.id}`, {
+    headers,
+    body:{
+      cropPlanId:plan.id, scenario:'low', expectedYieldQuintal:10, yieldUnit:'quintal_total', pricePerQuintal:2000,
+      currency:'INR', costUnit:'INR_total', expenses:{ seed:500, labour:1000 },
+      expensesComplete:true, assumptions:['Farmer-entered planning scenario'], source:'FARMER_ENTERED'
+    }
+  });
+  assert.equal(complete.status, 200);
+  dashboard = (await (await client.get(`/api/dashboard?farmId=${farmId}`, { headers })).json()).data;
+  const scenario = dashboard.profit.future.scenarios.find((item) => item.crop === 'Millet');
+  assert.ok(scenario, JSON.stringify({ profit:dashboard.profit, plans:dashboard.cropPlans, scenarios:dashboard.financialScenarios }));
+  assert.equal(scenario.revenue, 20000);
+  assert.equal(scenario.profit, 18500);
+
+  const wrongCrop = await client.put(`${endpoint}/${(await complete.json()).data.id}`, {
+    headers,
+    body:{ crop:'Wheat', scenario:'low', cropPlanId:plan.id, expectedYieldQuintal:10, yieldUnit:'quintal_total',
+      pricePerQuintal:2000, currency:'INR', costUnit:'INR_total', expenses:{ seed:500 },
+      expensesComplete:true, assumptions:[], source:'FARMER_ENTERED' }
+  });
+  assert.equal(wrongCrop.status, 422);
+
+  const protectedPlan = await client.delete(`/api/farms/${farmId}/crop-plans/${plan.id}`, { headers });
+  assert.equal(protectedPlan.status, 409);
+  assert.equal((await protectedPlan.json()).error, 'crop_plan_has_history');
+  const deleteFarm = await client.delete(`/api/farms/${farmId}`, { headers });
+  assert.equal(deleteFarm.status, 200);
+  assert.equal(client.store.list('financialScenarios').some((item) => item.farmId === farmId), false);
+});

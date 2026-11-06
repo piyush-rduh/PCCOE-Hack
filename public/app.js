@@ -12,6 +12,7 @@ const state = {
   farms: [],
   notifications: [],
   market: null,
+  memoryFilters: {},
   token: localStorage.getItem(TOKEN_KEY) || null,
   user: null
 };
@@ -51,6 +52,21 @@ function dataLabel(value) {
 function localizedDataText(value) {
   const translated = getPath(state.locale || {}, `data.${value}`);
   return typeof translated === 'string' ? translated : value;
+}
+function engineMessage(message) {
+  const template = getPath(state.locale || {}, `engineMessages.${message?.code}`);
+  if (typeof template !== 'string') return t('engine.messageUnavailable');
+  const params = message?.params || {};
+  return template.replace(/\{(\w+)\}/g, (_, name) => {
+    const value = params[name];
+    if (value == null) return '';
+    return ['parameter', 'source'].includes(name) ? esc(localizedDataText(value)) : esc(value);
+  });
+}
+function engineMessageList(messages, fallback = []) {
+  return Array.isArray(messages) && messages.length
+    ? messages.map(engineMessage)
+    : fallback.map((value) => esc(value));
 }
 function sourceBadge(source) {
   const map = { LIVE_SENSOR:['common.liveSensor','live'], EXTERNAL_API:['common.externalApi','external'], FARMER_ENTERED:['common.farmerEntered','farmer'], SIMULATED_SENSOR:['common.simulated','demo'], SIMULATED_WEATHER:['common.simulated','demo'], DEMO_MARKET_DATA:['common.simulated','demo'], SIMULATED_DEMO_DATA:['engine.demoSimulation','demo'], DECISION_ENGINE:['common.decisionEngine','engine'], FARMER_CONFIRMED:['common.farmerEntered','farmer'] };
@@ -164,6 +180,9 @@ function card(title, body, description = '', meta = '') {
 }
 function metric(label, value, sub, tone = '') {
   return `<div class="metric-card"><div class="metric-label">${label}</div><div class="metric-value ${tone}">${value}</div><div class="metric-sub">${sub}</div></div>`;
+}
+function fieldLabel(label, input) {
+  return `<label class="form-field"><span>${label}</span>${input}</label>`;
 }
 function actionItem(mark, title, text, action = '') {
   return `<div class="action-item"><div class="action-mark">${esc(mark)}</div><div><b>${title}</b><p>${text}</p>${action ? `<div class="action-control">${action}</div>` : ''}</div></div>`;
@@ -309,7 +328,7 @@ function renderDashboard() {
   `<div class="grid content-grid"><div class="section-stack">${card(t('recommendations.title'), rec ? `<div class="action-item"><div class="action-mark">✦</div><div class="action-copy"><b>${esc(rec.crop)}</b><p>${esc(rec.reasons[0] || t('recommendations.explanation'))}</p></div></div>` : `<div class="empty-state">${t('engine.recommendationsUnavailable')}</div>`, t('recommendations.notice'), sourceBadge('DECISION_ENGINE'))}</div><div class="section-stack">${card(t('dashboard.important'), openAlerts.length ? `<div class="alert-list">${openAlerts.slice(0,4).map(alertMarkup).join('')}</div>` : `<div class="empty-state">${t('common.noData')}</div>`, t('dashboard.actionsNote'), sourceBadge('DECISION_ENGINE'))}${card(t('memory.seasonHistory'), crop ? `<div class="inline-between"><div><h3>${esc(crop.crop)}</h3><div class="metric-sub">${esc(crop.variety)} · ${dataLabel(crop.growthStage)} · ${dataLabel(crop.status)}</div></div>${sourceBadge(crop.source)}</div><div class="balance"><div class="balance-fill" style="width:${Math.min(100, Math.max(8, ['Sowing','Vegetative','Flowering','Grain filling','Maturity','Harvested'].indexOf(crop.growthStage) / 5 * 100))}%"></div></div><div class="balance-labels"><span>${date(crop.planted)}</span><span>${date(crop.expectedHarvest)}</span></div>` : `<div class="empty-state">${t('common.noData')}</div>`, t('recommendations.explanation'))}</div></div>`;
 }
 
-function renderMemory() {
+function renderMemoryLegacy() {
   const d = state.dashboard, land = d.landPower;
   const records = d.profit.records;
   const seasonRows = records.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>${t('memory.seasons')}</th><th>${t('recommendations.crop')}</th><th>${t('history.planted')}</th><th>${t('history.harvested')}</th><th>${t('memory.yield')}</th><th>${t('memory.revenue')}</th><th>${t('memory.profit')}</th><th>${t('common.source')}</th><th></th></tr></thead><tbody>${records.map((record) => {
@@ -332,6 +351,104 @@ function renderMemory() {
   return pageHeading(t('memory.eyebrow'), t('memory.title'), t('memory.description'), `<button class="btn" data-action="add-season">${t('history.addSeason')}</button><button class="btn secondary" data-action="log-activity">${t('memory.addActivity')}</button><button class="btn secondary" data-action="add-soil">${t('memory.addSoil')}</button>`) +
   `<div class="grid metric-grid">${metric(t('memory.seasons'), d.seasons.length, d.seasons.length ? `${esc(d.seasons.at(-1).crop)} · ${d.seasons.at(-1).year}` : t('memory.noSeasons'))}${metric(t('memory.soilParameters'), new Set(d.soilTests.map((x) => x.parameter)).size, `${land.missing.length} ${t('memory.missing')}`)}${metric(t('memory.zones'), d.zones.length, `${number(d.zones.reduce((a,z)=>a+Number(z.areaAcres||0),0))} ac`)}${metric(t('memory.activities'), d.activities.length, t('common.farmerRecord'))}</div>` +
   `<div class="grid content-grid"><div class="section-stack">${card(t('memory.seasonHistory'), seasonRows, t('profit.formula'))}${card(t('memory.recent'), activityItems)}${card(t('history.soilHistory'), soilItems)}${card(t('memory.soilTrend'), soilTrendRows)}${card(t('memory.waterHistory'), waterUseRows)}${card(t('recommendations.decisionHistory'), decisions)}</div><div class="section-stack">${card(t('memory.landExplanation'), `<div class="inline-between"><div class="metric-value">${land.score}</div>${sourceBadge('DECISION_ENGINE')}</div><p class="card-description">${dataLabel(land.confidence)} ${t('common.confidence')}. ${t('memory.missingHint')}</p><div class="mini-bars">${(land.historicalChanges?.length ? land.historicalChanges.slice(0, 5) : [{parameter:'—', observations:[{date:null, value:land.score}]}]).map((point) => `<div class="mini-bar" style="height:${Math.max(8, Number((point.observations?.at(-1)?.value ?? land.score) || 0))}%"><span>${esc(point.parameter || '—')}</span></div>`).join('')}</div><div class="explanation-list"><h3>${t('memory.strengths')}</h3><ul class="card-description">${(land.strengths.length ? land.strengths : [t('memory.noStrengths')]).map((x) => `<li>${esc(x)}</li>`).join('')}</ul><h3>${t('memory.limitations')}</h3><ul class="card-description">${(land.limitations.length ? land.limitations : [t('memory.noLimitations')]).map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>`, t('common.notStandardized'))}${card(t('memory.missing'), land.missing.length ? `<div class="tag-row">${land.missing.map((item) => `<span class="provenance demo">${esc(item)} ${t('memory.parametersNeeded', { parameter:'' }).trim()}</span>`).join('')}</div>` : `<div class="empty-state">${t('common.noData')}</div>`, t('memory.missingHint'))}</div></div>`;
+}
+
+function renderMemory() {
+  const d = state.dashboard;
+  const plans = d.cropPlans || [];
+  const zones = d.zones || [];
+  const zoneName = (zoneId) => zones.find((zone) => zone.id === zoneId)?.name || t('history.unavailable');
+  const filters = state.memoryFilters || {};
+  const events = [
+    ...(d.seasons || []).map((item) => ({
+      type:'crop_history', date:item.harvestedDate || item.plantedDate || item.createdAt,
+      zoneId:item.zoneId, title:item.crop, detail:`${item.season || t('history.unknown')} · ${item.year ?? t('history.unknown')} · ${item.yieldQuintal == null ? t('history.unknown') : `${number(item.yieldQuintal)} q`}`,
+      source:item.source, id:item.id
+    })),
+    ...plans.map((item) => ({
+      type:'crop_plan', date:item.sowingDate || item.createdAt, zoneId:item.zoneId,
+      title:item.crop, detail:`${item.status} · ${item.currentGrowthStage || t('history.unknown')} · ${item.cultivatedArea == null ? t('history.unknown') : `${number(item.cultivatedArea)} ${item.areaUnit}`}`,
+      source:item.recordSource || item.source, id:item.id
+    })),
+    ...(d.soilTests || []).map((item) => ({
+      type:'soil_test', date:item.date, zoneId:item.zoneId, title:item.parameter,
+      detail:`${item.value == null ? t('history.unknown') : `${measurement(item.value)} ${item.unit || ''}`} · ${item.method || t('history.unknown')}`,
+      source:item.source, id:item.id
+    })),
+    ...(d.activities || []).map((item) => ({
+      type:'activity', date:item.date, zoneId:item.zoneId, title:item.type,
+      detail:[item.quantity == null ? t('history.unknown') : `${item.quantity} ${item.unit || ''}`, item.notes].filter(Boolean).join(' · '),
+      source:item.source, id:item.id
+    })),
+    ...(d.waterUseEvents || []).map((item) => ({
+      type:'water_use', date:item.eventDateTime, zoneId:item.zoneId, title:item.applicationMethod,
+      detail:`${item.waterQuantity == null ? t('history.unknown') : `${number(item.waterQuantity)} ${item.quantityUnit}`} · ${item.sourceOfMeasurement}`,
+      source:item.recordProvenance, id:item.id
+    })),
+    ...(d.effectiveRainfall || []).map((item) => ({
+      type:'effective_rainfall', date:item.observationDate, zoneId:item.zoneId, title:t('memory.effectiveRainfall'),
+      detail:`${number(item.amount)} mm · ${item.method}`, source:item.source, id:item.id
+    })),
+    ...(d.planningPeriods || []).map((item) => ({
+      type:'planning_period', date:item.startDate, zoneId:item.zoneId, title:t('memory.planningPeriod'),
+      detail:`${date(item.startDate)} – ${date(item.endDate)} · ${item.durationDays} ${t('memory.days')}`,
+      source:t('common.farmerEntered'), id:item.id
+    })),
+    ...(d.financialScenarios || []).map((item) => ({
+      type:'financial_scenario', date:item.createdAt, zoneId:item.zoneId, title:`${item.crop} · ${item.scenario}`,
+      detail:`${item.expectedYieldQuintal == null ? t('history.unknown') : `${number(item.expectedYieldQuintal)} q`} · ${item.pricePerQuintal == null ? t('history.unknown') : money(item.pricePerQuintal)} / q`,
+      source:item.source, id:item.id
+    }))
+  ].filter((item) => item.date)
+    .filter((item) => !filters.type || item.type === filters.type)
+    .filter((item) => !filters.zoneId || item.zoneId === filters.zoneId)
+    .filter((item) => !filters.dateFrom || String(item.date).slice(0, 10) >= filters.dateFrom)
+    .filter((item) => !filters.dateTo || String(item.date).slice(0, 10) <= filters.dateTo)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const eventTypeLabel = (type) => ({
+    crop_history:t('memory.seasons'), crop_plan:t('memory.cropPlans'), soil_test:t('history.soilHistory'),
+    activity:t('memory.activities'), water_use:t('memory.waterUse'), effective_rainfall:t('memory.effectiveRainfall'),
+    planning_period:t('memory.planningPeriod'), financial_scenario:t('memory.financialScenarios')
+  }[type] || type);
+  const timeline = events.length
+    ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>${t('forms.date')}</th><th>${t('memory.eventType')}</th><th>${t('memory.event')}</th><th>${t('forms.zone')}</th><th>${t('common.source')}</th></tr></thead><tbody>${events.map((item) => `<tr><td>${dateTime(item.date)}</td><td>${esc(eventTypeLabel(item.type))}</td><td><b>${esc(item.title)}</b><div class="metric-sub">${esc(item.detail)}</div></td><td>${esc(zoneName(item.zoneId))}</td><td>${sourceBadge(item.source || 'UNKNOWN')}</td></tr>`).join('')}</tbody></table></div>`
+    : `<div class="empty-state">${t('memory.noTimeline')}</div>`;
+  const planRows = plans.length
+    ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>${t('recommendations.crop')}</th><th>${t('forms.zone')}</th><th>${t('history.season')}</th><th>${t('history.planted')}</th><th>${t('memory.expectedHarvest')}</th><th>${t('forms.growthStage')}</th><th>${t('memory.area')}</th><th>${t('common.status')}</th><th></th></tr></thead><tbody>${plans.map((item) => {
+      const missing = [item.currentGrowthStage, item.season, item.agriculturalYear, item.sowingDate, item.expectedHarvestDate].filter((value) => value == null || value === '').length;
+      return `<tr><td><b>${esc(item.crop)}</b><div class="metric-sub">${esc(item.variety || t('history.unknown'))}</div></td><td>${esc(zoneName(item.zoneId))}</td><td>${item.season ? dataLabel(item.season) : t('history.unknown')} · ${item.agriculturalYear ?? t('history.unknown')}</td><td>${date(item.sowingDate)}</td><td>${date(item.actualHarvestDate || item.expectedHarvestDate)}</td><td>${item.currentGrowthStage ? dataLabel(item.currentGrowthStage) : t('history.unknown')}</td><td>${number(item.cultivatedArea)} ${esc(item.areaUnit)}</td><td>${dataLabel(item.status)}${missing ? `<div class="metric-sub">${t('memory.missingFields', { count:missing })}</div>` : ''}</td><td><button class="btn secondary small-button" data-edit-crop-plan="${esc(item.id)}">${t('common.edit')}</button></td></tr>`;
+    }).join('')}</tbody></table></div>`
+    : `<div class="empty-state">${t('memory.noPlans')}</div>`;
+  const soilRows = (d.soilTests || []).length
+    ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>${t('memory.trendParameter')}</th><th>${t('forms.date')}</th><th>${t('forms.value')}</th><th>${t('forms.method')}</th><th>${t('common.source')}</th></tr></thead><tbody>${d.soilTests.slice().sort((a,b) => String(b.date).localeCompare(String(a.date))).map((item) => `<tr><td>${esc(item.parameter)}</td><td>${date(item.date)}</td><td>${item.value == null ? t('history.unknown') : `${measurement(item.value)} ${esc(item.unit || '')}`}</td><td>${esc(item.method || t('history.unknown'))}</td><td>${sourceBadge(item.source || 'UNKNOWN')}</td></tr>`).join('')}</tbody></table></div>`
+    : `<div class="empty-state">${t('memory.noSoilTrend')}</div>`;
+  const waterRows = (d.waterAvailability || []).map((item) => `<tr><td>${date(item.measurementDate)}</td><td>${dataLabel(item.waterType)}</td><td>${number(item.availableWaterLitres)} ${esc(item.unit)}</td><td>${esc(item.validityPeriod || t('history.unknown'))}</td><td>${sourceBadge(item.provenance || 'UNKNOWN')}</td></tr>`).join('');
+  const useRows = (d.waterUseEvents || []).map((item) => `<tr><td>${dateTime(item.eventDateTime)}</td><td>${esc(zoneName(item.zoneId))}</td><td>${number(item.waterQuantity)} ${esc(item.quantityUnit)}</td><td>${esc(item.applicationMethod)}</td><td>${esc(item.sourceOfMeasurement)}</td><td>${sourceBadge(item.recordProvenance || 'UNKNOWN')}</td></tr>`).join('');
+  const scenarios = (d.financialScenarios || []).map((item) => {
+    const calculation = d.profit.future.scenarios.find((scenario) => scenario.recordId === item.id);
+    return `<tr><td>${esc(item.crop)}</td><td>${dataLabel(item.scenario)}</td><td>${item.expectedYieldQuintal == null ? t('history.unknown') : `${number(item.expectedYieldQuintal)} q`}</td><td>${item.pricePerQuintal == null ? t('history.unknown') : `${money(item.pricePerQuintal)} / q`}</td><td>${item.expensesComplete && calculation ? money(calculation.profit) : t('memory.notCalculated')}</td><td>${sourceBadge(item.source)}</td><td><button class="btn secondary small-button" data-edit-financial-scenario="${esc(item.id)}">${t('common.edit')}</button></td></tr>`;
+  }).join('');
+  const records = d.profit.actual.dataType === 'recorded_history' ? (d.profit.records || []) : [];
+  const financialRows = records.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>${t('recommendations.crop')}</th><th>${t('history.season')}</th><th>${t('memory.yield')}</th><th>${t('memory.revenue')}</th><th>${t('memory.profit')}</th><th>${t('common.source')}</th></tr></thead><tbody>${records.map((record) => `<tr><td>${esc(record.crop)}</td><td>${record.season ? dataLabel(record.season) : t('history.unknown')} · ${record.year ?? t('history.unknown')}</td><td>${record.yieldQuintal == null ? t('history.unknown') : `${number(record.yieldQuintal)} q`}</td><td>${money(record.revenue)}</td><td>${money(record.profit)}</td><td>${sourceBadge(record.source || 'FARMER_ENTERED')}</td></tr>`).join('')}</tbody></table></div>` : `<div class="empty-state">${t('memory.noActualFinances')}</div>`;
+  const demoRecords = d.profit.demonstration?.records || [];
+  const demoRows = demoRecords.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>${t('recommendations.crop')}</th><th>${t('history.season')}</th><th>${t('memory.yield')}</th><th>${t('memory.revenue')}</th><th>${t('memory.profit')}</th><th>${t('common.source')}</th></tr></thead><tbody>${demoRecords.map((record) => `<tr><td>${esc(record.crop)}</td><td>${record.season || t('history.unknown')} · ${record.year ?? t('history.unknown')}</td><td>${record.yieldQuintal == null ? t('history.unknown') : `${number(record.yieldQuintal)} q`}</td><td>${money(record.revenue)}</td><td>${money(record.profit)}</td><td>${sourceBadge('SIMULATED_WEATHER')}</td></tr>`).join('')}</tbody></table></div>` : `<div class="empty-state">${t('memory.noDemoFinances')}</div>`;
+  const completeness = d.decisionEngine?.missingInputs || [];
+  const actions = `<button class="btn" data-action="add-crop-plan">${t('memory.addCropPlan')}</button><button class="btn secondary" data-action="add-planning-period">${t('memory.addPlanningPeriod')}</button><button class="btn secondary" data-action="add-effective-rainfall">${t('memory.addEffectiveRainfall')}</button><button class="btn secondary" data-action="add-water-availability">${t('memory.addWaterAvailability')}</button><button class="btn secondary" data-action="add-season">${t('history.addSeason')}</button><button class="btn secondary" data-action="log-activity">${t('memory.addActivity')}</button><button class="btn secondary" data-action="add-soil">${t('memory.addSoil')}</button><button class="btn secondary" data-action="add-water-use">${t('memory.addWaterUse')}</button><button class="btn secondary" data-action="add-financial-scenario">${t('memory.addFinancialScenario')}</button>`;
+  return pageHeading(t('memory.eyebrow'), t('memory.title'), t('memory.description'), actions)
+    + `<div class="grid metric-grid">${metric(t('farms.title'), state.farms.length, t('memory.currentFarmerRecords'))}${metric(t('memory.zones'), zones.length, `${number(zones.reduce((sum, zone) => sum + Number(zone.areaAcres || 0), 0))} ac`)}${metric(t('memory.cropPlans'), plans.length, `${plans.filter((plan) => plan.status === 'completed').length} ${t('memory.completed')}`)}${metric(t('memory.soilParameters'), new Set((d.soilTests || []).map((item) => item.parameter)).size, `${(d.soilTests || []).length} ${t('memory.records')}`)}${metric(t('memory.waterUse'), (d.waterUseEvents || []).length, `${(d.waterAvailability || []).length} ${t('memory.waterAvailability')}`)}${metric(t('memory.financialRecords'), records.length + demoRecords.length, `${(d.financialScenarios || []).length} ${t('memory.financialScenarios')}`)}</div>`
+    + card(t('memory.dataCompleteness'), completeness.length ? `<ul>${completeness.map((item) => `<li>${esc(dataLabel(item))}</li>`).join('')}</ul>` : `<p>${t('memory.complete')}</p>`)
+    + `<form id="memory-filters" class="card admin-filter-bar">${fieldLabel(t('memory.eventType'), `<select name="type"><option value="">${t('common.all')}</option>${['crop_history','crop_plan','soil_test','activity','water_use','effective_rainfall','planning_period','financial_scenario'].map((type) => `<option value="${type}" ${filters.type === type ? 'selected' : ''}>${esc(eventTypeLabel(type))}</option>`).join('')}</select>`)}${fieldLabel(t('forms.zone'), `<select name="zoneId"><option value="">${t('common.all')}</option>${zones.map((zone) => `<option value="${esc(zone.id)}" ${filters.zoneId === zone.id ? 'selected' : ''}>${esc(zone.name)}</option>`).join('')}</select>`)}${fieldLabel(t('memory.from'), `<input type="date" name="dateFrom" value="${esc(filters.dateFrom || '')}">`)}${fieldLabel(t('memory.to'), `<input type="date" name="dateTo" value="${esc(filters.dateTo || '')}">`)}<button class="btn" type="submit">${t('common.filter')}</button><button class="btn secondary" type="button" data-action="clear-memory-filters">${t('common.clear')}</button></form>`
+    + card(t('memory.timeline'), timeline)
+    + card(t('memory.cropPlans'), planRows)
+    + card(t('history.soilHistory'), soilRows, t('memory.soilComparableNote'))
+    + card(t('memory.planningPeriod'), (d.planningPeriods || []).length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>${t('memory.planningPeriod')}</th><th>${t('forms.zone')}</th><th>${t('memory.cropPlans')}</th><th>${t('common.status')}</th></tr></thead><tbody>${d.planningPeriods.map((item) => `<tr><td>${date(item.startDate)} – ${date(item.endDate)} · ${item.durationDays} ${t('memory.days')}</td><td>${esc(zoneName(item.zoneId))}</td><td>${esc(plans.find((plan) => plan.id === item.cropPlanId)?.crop || t('history.unknown'))}</td><td>${dataLabel(item.status)}</td></tr>`).join('')}</tbody></table></div>` : `<div class="empty-state">${t('memory.noPlanningPeriods')}</div>`)
+    + card(t('memory.effectiveRainfall'), (d.effectiveRainfall || []).length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>${t('forms.date')}</th><th>${t('forms.zone')}</th><th>${t('memory.planningPeriod')}</th><th>${t('memory.rainAmount')}</th><th>${t('memory.method')}</th><th>${t('common.source')}</th></tr></thead><tbody>${d.effectiveRainfall.map((item) => `<tr><td>${date(item.observationDate)}</td><td>${esc(zoneName(item.zoneId))}</td><td>${esc(item.planningPeriodId)}</td><td>${number(item.amount)} mm</td><td>${esc(item.method)}</td><td>${sourceBadge(item.provenance || 'UNKNOWN')}</td></tr>`).join('')}</tbody></table></div>` : `<div class="empty-state">${t('memory.noEffectiveRainfall')}</div>`)
+    + card(t('memory.waterAvailability'), waterRows ? `<p class="card-description">${t('memory.waterInventoryNote')}</p><div class="table-scroll"><table class="data-table"><thead><tr><th>${t('forms.date')}</th><th>${t('common.status')}</th><th>${t('monitor.availableWater')}</th><th>${t('memory.validity')}</th><th>${t('common.source')}</th></tr></thead><tbody>${waterRows}</tbody></table></div>` : `<div class="empty-state">${t('common.noData')}</div>`)
+    + card(t('memory.waterHistory'), useRows ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>${t('forms.date')}</th><th>${t('forms.zone')}</th><th>${t('monitor.allocation')}</th><th>${t('memory.method')}</th><th>${t('memory.measurementSource')}</th><th>${t('common.source')}</th></tr></thead><tbody>${useRows}</tbody></table></div>` : `<div class="empty-state">${t('memory.noWaterUse')}</div>`)
+    + card(t('memory.actualFinances'), financialRows, t('memory.actualFinanceNote'))
+    + card(t('memory.demoFinances'), demoRows, t('memory.demoFinanceNote'))
+    + card(t('memory.financialScenarios'), scenarios ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>${t('recommendations.crop')}</th><th>${t('memory.scenario')}</th><th>${t('memory.expectedYield')}</th><th>${t('memory.expectedPrice')}</th><th>${t('memory.profit')}</th><th>${t('common.source')}</th><th></th></tr></thead><tbody>${scenarios}</tbody></table></div>` : `<div class="empty-state">${t('memory.noFinancialScenarios')}</div>`)
+    + card(t('memory.landExplanation'), `<div class="inline-between"><div class="metric-value">${land.score}</div>${sourceBadge('DECISION_ENGINE')}</div><p class="card-description">${dataLabel(land.confidence)} ${t('common.confidence')}. ${t('memory.missingHint')}</p><ul>${(land.assumptions || []).map((item) => `<li>${esc(item)}</li>`).join('')}</ul>`, t('common.notStandardized'));
 }
 
 function renderProfile() {
@@ -360,9 +477,11 @@ function renderNotifications() {
 function recCard(item, index) {
   if (!item.available || !item.crop) {
     const categoryKey = { restoration:'restore', balanced:'balanced', profit:'profitLens' }[item.categoryKey];
-    return `<article class="recommendation"><div class="rec-top"><div class="rec-category">${t(`recommendations.${categoryKey || 'whyLenses'}`)}</div><span class="score-pill">—</span></div><h3>${t('engine.noCropRanked')}</h3><p class="card-description">${t('engine.recommendationsUnavailable')}</p></article>`;
+    const unavailableMessage = item.messages?.[0] ? engineMessage(item.messages[0]) : t('engine.recommendationsUnavailable');
+    return `<article class="recommendation"><div class="rec-top"><div class="rec-category">${t(`recommendations.${categoryKey || 'whyLenses'}`)}</div><span class="score-pill">—</span></div><h3>${t('engine.noCropRanked')}</h3><p class="card-description">${unavailableMessage}</p></article>`;
   }
-  const reasons = item.reasons?.length ? item.reasons.map((reason) => `<li>${dataLabel(reason)}</li>`).join('') : `<li>${t('history.unavailable')}</li>`;
+  const reasonItems = engineMessageList(item.messages, item.reasons || []);
+  const reasons = reasonItems.length ? reasonItems.map((reason) => `<li>${reason}</li>`).join('') : `<li>${t('history.unavailable')}</li>`;
   const risks = item.risks?.length ? `<div class="tag-row rec-risk"><span class="provenance demo">${t('recommendations.risk')}</span><span class="metric-sub">${item.risks.map(dataLabel).join(' · ')}</span></div>` : '';
   return `<article class="recommendation ${index === 1 ? 'featured' : ''}"><div class="rec-top"><div class="rec-category">${dataLabel(item.category)}</div><span class="score-pill">${item.suitabilityScore}/100</span></div><div class="crop-illustration" aria-hidden="true">${index === 0 ? '🌱' : index === 1 ? '🌾' : '🌿'}</div><h3>${esc(item.crop)}</h3><div class="variety">${esc(item.variety)} · ${dataLabel(item.season)} · ${item.waterRequirementMm} mm ${t('recommendations.waterReference')}</div><div class="rec-stats"><div class="rec-stat"><span>${t('recommendations.yieldRange')} · ${t('common.estimated')}</span><b>${item.expectedYieldRange[0]}–${item.expectedYieldRange[1]} q/ac</b></div><div class="rec-stat"><span>${t('recommendations.profitAcre')} · ${t('common.estimated')}</span><b>${money(item.estimatedProfitPerAcre)}</b></div><div class="rec-stat"><span>${t('recommendations.costAcre')} · ${t('common.estimated')}</span><b>${money(item.estimatedCostPerAcre)}</b></div><div class="rec-stat"><span>${t('common.confidence')}</span><b>${confidenceLabel(item.confidence)}</b></div></div><div class="rec-copy"><b>${t('recommendations.suitability')}</b><ul>${reasons}</ul></div>${risks}<div class="card-actions"><button class="btn" data-rec-explain="${esc(item.crop)}">${t('common.explain')}</button><button class="btn secondary" data-rec-decision="${esc(item.crop)}" data-status="accepted">${t('recommendations.accept')}</button><button class="btn secondary" data-rec-decision="${esc(item.crop)}" data-status="rejected">${t('recommendations.reject')}</button></div></article>`;
 }
@@ -378,7 +497,7 @@ function renderMonitor() {
   const readings = d.sensorReadings?.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>${t('monitor.recorded')}</th><th>${t('monitor.soilMoisture')}</th><th>${t('forms.temperature')}</th><th>${t('forms.humidity')}</th><th>${t('common.source')}</th></tr></thead><tbody>${d.sensorReadings.map((reading) => `<tr><td>${dateTime(reading.recordedAt)}</td><td>${number(reading.soilMoisturePct)}%</td><td>${reading.temperatureC == null ? '—' : `${number(reading.temperatureC)}°C`}</td><td>${reading.humidityPct == null ? '—' : `${number(reading.humidityPct)}%`}</td><td>${sourceBadge(reading.source)}</td></tr>`).join('')}</tbody></table></div>` : `<div class="empty-state">${t('monitor.noReadings')}</div>`;
   const forecast = d.weather.length ? weatherMarkup(d.weather) : `<div class="empty-state">${t('common.noData')}</div>`;
   return pageHeading(t('monitor.eyebrow'), t('monitor.title'), t('monitor.description'), `${d.sensorDevices.length ? `<button class="btn" data-action="add-reading">${t('monitor.addReading')}</button>` : ''}<button class="btn secondary" data-action="add-soil">${t('memory.addSoil')}</button>`) +
-  `<div class="grid content-grid"><div class="section-stack">${card(t('monitor.waterBudget'), `<div class="grid split-two"><div><div class="metric-label">${t('monitor.availableWater')}</div><div class="metric-value">${litres(water.availableWaterLitres)}</div></div><div><div class="metric-label">${t('monitor.projectedNeed')}</div><div class="metric-value">${litres(water.irrigationRequirementLitres)}</div></div></div><div class="balance"><div class="balance-fill ${water.status === 'deficit' ? 'deficit' : ''}" style="width:${Math.min(100, Math.round((Math.min(water.availableWaterLitres, water.irrigationRequirementLitres) / max) * 100))}%"></div></div><div class="balance-labels"><span>${water.status === 'deficit' ? `${t('monitor.deficit')} ${litres(Math.abs(water.balanceLitres))}` : `${t('monitor.surplus')} ${litres(water.balanceLitres)}`}</span><span>${dataLabel(water.status)}</span></div><div class="grid split-two compact-grid"><div class="rec-stat"><span>${t('monitor.rainContribution')}</span><b>${litres(water.expectedRainfallContributionLitres)}</b></div><div class="rec-stat"><span>${t('monitor.zonesAllocated')}</span><b>${water.affectedZones.length}</b></div></div><details class="details-block"><summary class="metric-label">${t('common.assumptions')}</summary><ul class="card-description">${water.assumptions.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></details>`, t('monitor.formula'), sourceBadge('DECISION_ENGINE'))}${card(t('monitor.zoneAllocation'), water.affectedZones.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>${t('monitor.zoneAllocation')}</th><th>${t('monitor.area')}</th><th>${t('monitor.allocation')}</th></tr></thead><tbody>${water.affectedZones.map((zone) => `<tr><td><b>${esc(zone.zoneName)}</b></td><td>${zone.areaAcres} ac</td><td>${litres(zone.allocationLitres)}</td></tr>`).join('')}</tbody></table></div>` : `<div class="empty-state">${t('common.noData')}</div>`)}</div><div class="section-stack">${card(t('monitor.weather'), forecast, t('monitor.weatherNote'))}${card(t('monitor.sensorStatus'), d.sensorDevices.length ? d.sensorDevices.map((device) => `<div class="action-item"><div class="action-mark">◌</div><div><div class="inline-between"><b>${esc(device.name)}</b>${sourceBadge(device.source)}</div><p>${dataLabel(device.status)} · ${t('header.lastReading')} ${dateTime(device.lastReadingAt)}</p></div></div>`).join('') : `<div class="empty-state">${t('monitor.noDevices')}</div>`, t('monitor.staleNote'))}${card(t('monitor.readings'), readings, t('monitor.readingsNote'))}${card(t('monitor.irrigationAdvice'), `<h3>${esc(irrigation.recommendation)}</h3><p class="card-description" style="margin-top:7px">${t('monitor.timing')}: ${esc(irrigation.timing)} · ${t('monitor.suggested')}: ${litres(irrigation.quantityLitres)} · ${t('common.confidence')}: ${dataLabel(irrigation.confidence)}</p><ul class="card-description">${irrigation.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul><div class="notice" style="margin-top:12px">${esc(irrigation.safety)}</div>`, t('monitor.safety'))}${card(t('monitor.riskIntelligence'), d.risks.map((risk) => `<div class="action-item"><div class="action-mark ${risk.level === 'High' ? 'risk-mark' : ''}">${risk.level === 'High' ? '!' : 'i'}</div><div><div class="inline-between"><b>${risk.type === 'drought' ? t('monitor.drought') : t('monitor.flood')}</b><span class="score-pill">${dataLabel(risk.level)}</span></div><p>${esc(risk.reasons[0])}</p><div class="metric-sub">${t('common.confidence')}: ${esc(risk.confidence)}</div></div></div>`).join(''), t('monitor.riskSignal'))}</div></div>`;
+  `<div class="grid content-grid"><div class="section-stack">${card(t('monitor.waterBudget'), `<div class="grid split-two"><div><div class="metric-label">${t('monitor.availableWater')}</div><div class="metric-value">${litres(water.availableWaterLitres)}</div></div><div><div class="metric-label">${t('monitor.projectedNeed')}</div><div class="metric-value">${litres(water.irrigationRequirementLitres)}</div></div></div><div class="balance"><div class="balance-fill ${water.status === 'deficit' ? 'deficit' : ''}" style="width:${Math.min(100, Math.round((Math.min(water.availableWaterLitres, water.irrigationRequirementLitres) / max) * 100))}%"></div></div><div class="balance-labels"><span>${water.status === 'deficit' ? `${t('monitor.deficit')} ${litres(Math.abs(water.balanceLitres))}` : `${t('monitor.surplus')} ${litres(water.balanceLitres)}`}</span><span>${dataLabel(water.status)}</span></div><div class="grid split-two compact-grid"><div class="rec-stat"><span>${t('monitor.rainContribution')}</span><b>${litres(water.expectedRainfallContributionLitres)}</b></div><div class="rec-stat"><span>${t('monitor.zonesAllocated')}</span><b>${water.affectedZones.length}</b></div></div><details class="details-block"><summary class="metric-label">${t('common.assumptions')}</summary><ul class="card-description">${water.assumptions.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></details>`, t('monitor.formula'), sourceBadge('DECISION_ENGINE'))}${card(t('monitor.zoneAllocation'), water.affectedZones.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>${t('monitor.zoneAllocation')}</th><th>${t('monitor.area')}</th><th>${t('monitor.allocation')}</th></tr></thead><tbody>${water.affectedZones.map((zone) => `<tr><td><b>${esc(zone.zoneName)}</b></td><td>${zone.areaAcres} ac</td><td>${litres(zone.allocationLitres)}</td></tr>`).join('')}</tbody></table></div>` : `<div class="empty-state">${t('common.noData')}</div>`)}</div><div class="section-stack">${card(t('monitor.weather'), forecast, t('monitor.weatherNote'))}${card(t('monitor.sensorStatus'), d.sensorDevices.length ? d.sensorDevices.map((device) => `<div class="action-item"><div class="action-mark">◌</div><div><div class="inline-between"><b>${esc(device.name)}</b>${sourceBadge(device.source)}</div><p>${dataLabel(device.status)} · ${t('header.lastReading')} ${dateTime(device.lastReadingAt)}</p></div></div>`).join('') : `<div class="empty-state">${t('monitor.noDevices')}</div>`, t('monitor.staleNote'))}${card(t('monitor.readings'), readings, t('monitor.readingsNote'))}${card(t('monitor.irrigationAdvice'), `<h3>${irrigation.recommendationMessage ? engineMessage(irrigation.recommendationMessage) : esc(irrigation.recommendation)}</h3><p class="card-description" style="margin-top:7px">${t('monitor.timing')}: ${dataLabel(irrigation.timing)} · ${t('monitor.suggested')}: ${litres(irrigation.quantityLitres)} · ${t('common.confidence')}: ${dataLabel(irrigation.confidence)}</p><ul class="card-description">${engineMessageList(irrigation.messages, irrigation.reasons).map((reason) => `<li>${reason}</li>`).join('')}</ul><div class="notice" style="margin-top:12px">${t('monitor.safety')}</div>`, t('monitor.safety'))}${card(t('monitor.riskIntelligence'), d.risks.map((risk) => `<div class="action-item"><div class="action-mark ${risk.level === 'High' ? 'risk-mark' : ''}">${risk.level === 'High' ? '!' : 'i'}</div><div><div class="inline-between"><b>${risk.type === 'drought' ? t('monitor.drought') : t('monitor.flood')}</b><span class="score-pill">${dataLabel(risk.level)}</span></div><p>${engineMessageList(risk.messages, risk.reasons)[0] || t('history.unavailable')}</p><div class="metric-sub">${t('common.confidence')}: ${dataLabel(risk.confidence)}</div></div></div>`).join(''), t('monitor.riskSignal'))}</div></div>`;
 }
 
 function renderProfit() {
@@ -454,7 +573,58 @@ function seasonForm(record = {}) {
   const expenseKeys = ['seeds','fertilizer','pesticide','labour','irrigation','machinery','transport','other'];
   return `<form id="season-form"><div class="form-grid"><div class="form-field"><label>${t('recommendations.crop')}<input name="crop" value="${esc(record.crop || '')}" maxlength="80" required></label></div><div class="form-field"><label>${t('history.variety')} (${t('history.optional')})<input name="variety" value="${esc(record.variety || '')}" maxlength="80"></label></div><div class="form-field"><label>${t('history.season')} (${t('history.optional')})<select name="season"><option value="" ${record.season ? '' : 'selected'}>${t('history.unknown')}</option>${['Kharif','Rabi','Zaid','Summer','Annual'].map((season) => `<option value="${season}" ${record.season === season ? 'selected' : ''}>${dataLabel(season)}</option>`).join('')}</select></label></div><div class="form-field"><label>${t('history.year')} (${t('history.optional')})<input name="year" type="number" min="1990" max="2100" step="1" value="${esc(record.year ?? '')}"></label></div><div class="form-field"><label>${t('farms.area')} (ac)<input name="areaAcres" type="number" min="0.01" step="any" value="${esc(record.areaAcres ?? state.dashboard?.farm.areaAcres ?? '')}" required></label></div><div class="form-field"><label>${t('memory.yield')} (q, ${t('history.optional')})<input name="yieldQuintal" type="number" min="0" step="any" value="${esc(record.yieldQuintal ?? '')}"></label></div><div class="form-field"><label>${t('history.price')} (₹ / q, ${t('history.optional')})<input name="sellingPricePerQuintal" type="number" min="0" step="any" value="${esc(record.sellingPricePerQuintal ?? '')}"></label></div><input name="currency" type="hidden" value="INR"><div class="form-field"><label>${t('history.planted')} (${t('history.optional')})<input name="plantedDate" type="date" value="${esc(record.plantedDate || '')}"></label></div><div class="form-field"><label>${t('history.harvested')} (${t('history.optional')})<input name="harvestedDate" type="date" value="${esc(record.harvestedDate || '')}"></label></div></div><h3 class="section-gap">${t('profit.actualExpenses')}</h3><div class="form-grid">${expenseKeys.map((key) => `<div class="form-field"><label>${dataLabel(key)} (₹, ${t('history.optional')})<input name="expense-${key}" type="number" min="0" step="any" value="${esc(expenses[key] ?? '')}"></label></div>`).join('')}</div><label class="checkbox-row"><input name="expensesComplete" type="checkbox" ${record.expensesComplete ? 'checked' : ''}>${t('profit.expensesComplete')}</label><div class="notice form-notice">${t('profit.expenseCompletenessNote')}</div><div class="notice form-notice">${t('history.recordNote')}</div><button class="btn" type="submit">${t('common.save')}</button></form>`;
 }
-
+function cropPlanForm(record = {}) {
+  const zones = state.dashboard?.zones || [];
+  const selected = (value, current) => value === current ? 'selected' : '';
+  return `<form id="crop-plan-form" class="form-grid">
+    ${fieldLabel(t('recommendations.crop'), `<input name="crop" maxlength="80" required value="${esc(record.crop || '')}">`)}
+    ${fieldLabel(t('forms.variety'), `<input name="variety" maxlength="80" value="${esc(record.variety || '')}">`)}
+    ${fieldLabel(t('forms.zone'), `<select name="zoneId" required>${zones.map((zone) => `<option value="${esc(zone.id)}" ${selected(zone.id, record.zoneId)}>${esc(zone.name)}</option>`).join('')}</select>`)}
+    ${fieldLabel(t('history.season'), `<select name="season"><option value="">${t('history.unknown')}</option>${['Kharif','Rabi','Zaid','Summer','Annual'].map((value) => `<option ${selected(value, record.season)}>${value}</option>`).join('')}</select>`)}
+    ${fieldLabel(t('history.year'), `<input name="agriculturalYear" type="number" min="1900" max="2100" step="1" value="${esc(record.agriculturalYear ?? '')}">`)}
+    ${fieldLabel(t('memory.sowingDate'), `<input name="sowingDate" type="date" value="${esc(record.sowingDate || '')}">`)}
+    ${fieldLabel(t('memory.expectedHarvest'), `<input name="expectedHarvestDate" type="date" value="${esc(record.expectedHarvestDate || '')}">`)}
+    ${fieldLabel(t('memory.actualHarvest'), `<input name="actualHarvestDate" type="date" value="${esc(record.actualHarvestDate || '')}">`)}
+    ${fieldLabel(t('forms.growthStage'), `<input name="currentGrowthStage" maxlength="60" value="${esc(record.currentGrowthStage || '')}">`)}
+    ${fieldLabel(t('memory.area'), `<input name="cultivatedArea" type="number" min="0.000001" step="any" required value="${esc(record.cultivatedArea ?? '')}">`)}
+    ${fieldLabel(t('memory.areaUnit'), `<select name="areaUnit">${['acre','hectare','sqm'].map((value) => `<option value="${value}" ${selected(value, record.areaUnit || 'acre')}>${value}</option>`).join('')}</select>`)}
+    ${fieldLabel(t('common.status'), `<select name="status">${['planned','active','completed','cancelled'].map((value) => `<option value="${value}" ${selected(value, record.status || 'planned')}>${dataLabel(value)}</option>`).join('')}</select>`)}
+    <div class="form-actions"><button class="btn" type="submit">${t('common.save')}</button><button class="btn secondary" type="button" data-close-dialog>${t('common.cancel')}</button></div>
+  </form>`;
+}
+function waterUseForm() {
+  const zones = state.dashboard?.zones || [];
+  return `<form id="water-use-form" class="form-grid">
+    ${fieldLabel(t('forms.zone'), `<select name="zoneId" required>${zones.map((zone) => `<option value="${esc(zone.id)}">${esc(zone.name)}</option>`).join('')}</select>`)}
+    ${fieldLabel(t('forms.date'), '<input name="eventDateTime" type="datetime-local" required>')}
+    ${fieldLabel(t('monitor.allocation'), '<input name="waterQuantity" type="number" min="0" step="any" required>')}
+    ${fieldLabel(t('common.unit'), '<select name="quantityUnit" required><option value="litres">litres</option><option value="mm">mm</option></select>')}
+    ${fieldLabel(t('memory.method'), '<input name="applicationMethod" maxlength="80" required>')}
+    ${fieldLabel(t('memory.measurementSource'), '<input name="sourceOfMeasurement" maxlength="80" required>')}
+    ${fieldLabel(t('common.source'), `<select name="recordProvenance" required><option value="FARMER_ENTERED">${t('common.farmerEntered')}</option><option value="SENSOR_OBSERVED">${t('memory.sensorObserved')}</option><option value="DEMONSTRATION_DATA">${t('common.simulated')}</option></select>`)}
+    ${fieldLabel(t('memory.notes'), '<textarea name="notes" maxlength="1000"></textarea>')}
+    <div class="form-actions"><button class="btn" type="submit">${t('common.save')}</button><button class="btn secondary" type="button" data-close-dialog>${t('common.cancel')}</button></div>
+  </form>`;
+}
+function financialScenarioForm(record = {}) {
+  const plans = (state.dashboard?.cropPlans || []).filter((plan) => ['planned','active'].includes(plan.status));
+  const selected = (value, current) => value === current ? 'selected' : '';
+  return `<form id="financial-scenario-form" class="form-grid">
+    ${fieldLabel(t('recommendations.crop'), `<input name="crop" maxlength="80" required value="${esc(record.crop || '')}">`)}
+    ${fieldLabel(t('memory.cropPlanOptional'), `<select name="cropPlanId"><option value="">${t('history.unknown')}</option>${plans.map((plan) => `<option value="${esc(plan.id)}" ${selected(plan.id, record.cropPlanId)}>${esc(plan.crop)} · ${esc((state.dashboard.zones || []).find((zone) => zone.id === plan.zoneId)?.name || '')}</option>`).join('')}</select>`)}
+    ${fieldLabel(t('memory.scenario'), `<select name="scenario" required>${['low','medium','high'].map((value) => `<option value="${value}" ${selected(value, record.scenario || 'medium')}>${dataLabel(value)}</option>`).join('')}</select>`)}
+    ${fieldLabel(t('memory.expectedYield'), `<input name="expectedYieldQuintal" type="number" min="0" step="any" value="${esc(record.expectedYieldQuintal ?? '')}">`)}
+    ${fieldLabel(t('memory.expectedPrice'), `<input name="pricePerQuintal" type="number" min="0" step="any" value="${esc(record.pricePerQuintal ?? '')}">`)}
+    ${fieldLabel(t('memory.seedCosts'), `<input name="seed" type="number" min="0" step="any" value="${esc(record.expenses?.seed ?? '')}">`)}
+    ${fieldLabel(t('memory.laborCosts'), `<input name="labour" type="number" min="0" step="any" value="${esc(record.expenses?.labour ?? '')}">`)}
+    ${fieldLabel(t('memory.otherCosts'), `<input name="other" type="number" min="0" step="any" value="${esc(record.expenses?.other ?? '')}">`)}
+    ${fieldLabel(t('common.source'), `<select name="source" required><option value="FARMER_ENTERED">${t('common.farmerEntered')}</option><option value="DEMONSTRATION_DATA">${t('common.simulated')}</option></select>`)}
+    ${fieldLabel(t('memory.assumptions'), `<textarea name="assumptions" maxlength="3000">${esc((record.assumptions || []).join('\\n'))}</textarea>`)}
+    <label class="form-field checkbox-field"><input name="expensesComplete" type="checkbox" ${record.expensesComplete ? 'checked' : ''}><span>${t('memory.expensesComplete')}</span></label>
+    <input type="hidden" name="yieldUnit" value="quintal_total"><input type="hidden" name="currency" value="INR"><input type="hidden" name="costUnit" value="INR_total">
+    <div class="form-actions"><button class="btn" type="submit">${t('common.save')}</button><button class="btn secondary" type="button" data-close-dialog>${t('common.cancel')}</button></div>
+  </form>`;
+}
 function openForm(titleKey, endpoint, body, recordId = null) {
   const dialog = $('#action-dialog');
   $('#dialog-content').innerHTML = `<h2 class="modal-title">${t(titleKey)}</h2>${body}`;
@@ -577,6 +747,195 @@ function openSeasonForm(record = null) {
   });
 }
 
+function openCropPlanForm(record = null) {
+  $('#dialog-content').innerHTML = `<h2 class="modal-title">${t(record ? 'memory.editCropPlan' : 'memory.addCropPlan')}</h2>${cropPlanForm(record || {})}`;
+  const dialog = $('#action-dialog');
+  dialog.showModal();
+  $('[data-close-dialog]')?.addEventListener('click', () => dialog.close());
+  $('#crop-plan-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const raw = Object.fromEntries(new FormData(event.currentTarget).entries());
+    const payload = {
+      ...raw,
+      farmId:state.farmId,
+      variety:raw.variety || null,
+      season:raw.season || null,
+      agriculturalYear:numberOrNull(raw.agriculturalYear),
+      sowingDate:raw.sowingDate || null,
+      expectedHarvestDate:raw.expectedHarvestDate || null,
+      actualHarvestDate:raw.actualHarvestDate || null,
+      currentGrowthStage:raw.currentGrowthStage || null,
+      cultivatedArea:numberOrNull(raw.cultivatedArea),
+      recordSource:record?.recordSource || 'FARMER_ENTERED'
+    };
+    try {
+      await api(record
+        ? `/api/farms/${encodeURIComponent(state.farmId)}/crop-plans/${encodeURIComponent(record.id)}`
+        : `/api/farms/${encodeURIComponent(state.farmId)}/crop-plans`,
+      { method:record ? 'PUT' : 'POST', body:JSON.stringify(payload) });
+      dialog.close();
+      await loadDashboard();
+      toast(t('forms.saved'));
+    } catch (error) {
+      toast(translateError(error));
+    }
+  });
+}
+
+function openWaterUseForm() {
+  $('#dialog-content').innerHTML = `<h2 class="modal-title">${t('memory.addWaterUse')}</h2>${waterUseForm()}`;
+  const dialog = $('#action-dialog');
+  dialog.showModal();
+  $('[data-close-dialog]')?.addEventListener('click', () => dialog.close());
+  $('#water-use-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const raw = Object.fromEntries(new FormData(event.currentTarget).entries());
+    const payload = {
+      ...raw,
+      zoneId:raw.zoneId || null,
+      eventDateTime:new Date(raw.eventDateTime).toISOString(),
+      waterQuantity:numberOrNull(raw.waterQuantity),
+      recordProvenance:raw.recordProvenance,
+      farmId:state.farmId
+    };
+    try {
+      await api(`/api/farms/${encodeURIComponent(state.farmId)}/water-use-events`, { method:'POST', body:JSON.stringify(payload) });
+      dialog.close();
+      await loadDashboard();
+      toast(t('forms.saved'));
+    } catch (error) {
+      toast(translateError(error));
+    }
+  });
+}
+
+function openPlanningPeriodForm() {
+  const plans = state.dashboard?.cropPlans || [];
+  const zones = state.dashboard?.zones || [];
+  $('#dialog-content').innerHTML = `<h2 class="modal-title">${t('memory.addPlanningPeriod')}</h2><form id="planning-period-form" class="form-grid">
+    ${fieldLabel(t('forms.zone'), `<select name="zoneId"><option value="">${t('history.unknown')}</option>${zones.map((zone) => `<option value="${esc(zone.id)}">${esc(zone.name)}</option>`).join('')}</select>`)}
+    ${fieldLabel(t('memory.cropPlans'), `<select name="cropPlanId"><option value="">${t('history.unknown')}</option>${plans.map((plan) => `<option value="${esc(plan.id)}">${esc(plan.crop)} · ${esc(zoneNameForForm(plan.zoneId))}</option>`).join('')}</select>`)}
+    ${fieldLabel(t('memory.from'), '<input type="date" name="startDate" required>')}
+    ${fieldLabel(t('memory.to'), '<input type="date" name="endDate" required>')}
+    ${fieldLabel(t('common.status'), '<select name="status"><option value="draft">Draft</option><option value="active">Active</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option></select>')}
+    <div class="form-actions"><button class="btn" type="submit">${t('common.save')}</button><button class="btn secondary" type="button" data-close-dialog>${t('common.cancel')}</button></div>
+  </form>`;
+  const dialog = $('#action-dialog');
+  dialog.showModal();
+  $('[data-close-dialog]')?.addEventListener('click', () => dialog.close());
+  $('#planning-period-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const raw = Object.fromEntries(new FormData(event.currentTarget).entries());
+    const payload = { ...raw, farmId:state.farmId, zoneId:raw.zoneId || null, cropPlanId:raw.cropPlanId || null };
+    try {
+      await api(`/api/farms/${encodeURIComponent(state.farmId)}/planning-periods`, { method:'POST', body:JSON.stringify(payload) });
+      dialog.close();
+      await loadDashboard();
+      toast(t('forms.saved'));
+    } catch (error) { toast(translateError(error)); }
+  });
+}
+
+function zoneNameForForm(zoneId) {
+  return state.dashboard?.zones?.find((zone) => zone.id === zoneId)?.name || '';
+}
+
+function openEffectiveRainfallForm() {
+  const periods = state.dashboard?.planningPeriods || [];
+  const zones = state.dashboard?.zones || [];
+  $('#dialog-content').innerHTML = `<h2 class="modal-title">${t('memory.addEffectiveRainfall')}</h2><form id="effective-rainfall-form" class="form-grid">
+    ${fieldLabel(t('memory.planningPeriod'), `<select name="planningPeriodId" required>${periods.map((period) => `<option value="${esc(period.id)}">${date(period.startDate)} – ${date(period.endDate)} · ${esc(zoneNameForForm(period.zoneId))}</option>`).join('')}</select>`)}
+    ${fieldLabel(t('forms.zone'), `<select name="zoneId"><option value="">${t('history.unknown')}</option>${zones.map((zone) => `<option value="${esc(zone.id)}">${esc(zone.name)}</option>`).join('')}</select>`)}
+    ${fieldLabel(t('forms.date'), '<input type="date" name="observationDate" required>')}
+    ${fieldLabel(t('memory.rainAmount'), '<input type="number" name="amount" min="0" step="any" required>')}
+    ${fieldLabel(t('memory.method'), '<input name="method" maxlength="120" required>')}
+    ${fieldLabel(t('memory.measurementSource'), '<input name="source" maxlength="80" required>')}
+    <div class="notice form-notice">${t('memory.effectiveRainfallNotice')}</div>
+    <div class="form-actions"><button class="btn" type="submit">${t('common.save')}</button><button class="btn secondary" type="button" data-close-dialog>${t('common.cancel')}</button></div>
+  </form>`;
+  const dialog = $('#action-dialog');
+  dialog.showModal();
+  $('[data-close-dialog]')?.addEventListener('click', () => dialog.close());
+  $('#effective-rainfall-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const raw = Object.fromEntries(new FormData(event.currentTarget).entries());
+    const payload = { ...raw, farmId:state.farmId, zoneId:raw.zoneId || null, amount:numberOrNull(raw.amount), unit:'mm', provenance:'FARMER_ENTERED' };
+    try {
+      await api(`/api/farms/${encodeURIComponent(state.farmId)}/effective-rainfall`, { method:'POST', body:JSON.stringify(payload) });
+      dialog.close();
+      await loadDashboard();
+      toast(t('forms.saved'));
+    } catch (error) { toast(translateError(error)); }
+  });
+}
+
+function openWaterAvailabilityForm() {
+  const zones = state.dashboard?.zones || [];
+  $('#dialog-content').innerHTML = `<h2 class="modal-title">${t('memory.addWaterAvailability')}</h2><form id="water-availability-form" class="form-grid">
+    ${fieldLabel(t('forms.zone'), `<select name="zoneId"><option value="">${t('history.unknown')}</option>${zones.map((zone) => `<option value="${esc(zone.id)}">${esc(zone.name)}</option>`).join('')}</select>`)}
+    ${fieldLabel(t('memory.waterType'), '<select name="waterType" required><option value="">—</option><option value="stored">Stored</option><option value="reliable_incoming">Reliable incoming</option><option value="aggregate_available">Aggregate available</option><option value="unknown">Unknown type</option></select>')}
+    ${fieldLabel(t('forms.date'), '<input type="date" name="measurementDate" required>')}
+    ${fieldLabel(t('monitor.availableWater'), '<input type="number" name="availableWaterLitres" min="0" step="any" required>')}
+    ${fieldLabel(t('memory.validity'), '<input name="validityPeriod" maxlength="120">')}
+    ${fieldLabel(t('memory.notes'), '<textarea name="notes" maxlength="1000"></textarea>')}
+    <input type="hidden" name="unit" value="litres">
+    <div class="notice form-notice">${t('memory.waterInventoryNote')}</div>
+    <div class="form-actions"><button class="btn" type="submit">${t('common.save')}</button><button class="btn secondary" type="button" data-close-dialog>${t('common.cancel')}</button></div>
+  </form>`;
+  const dialog = $('#action-dialog');
+  dialog.showModal();
+  $('[data-close-dialog]')?.addEventListener('click', () => dialog.close());
+  $('#water-availability-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const raw = Object.fromEntries(new FormData(event.currentTarget).entries());
+    const payload = { ...raw, farmId:state.farmId, zoneId:raw.zoneId || null, availableWaterLitres:numberOrNull(raw.availableWaterLitres), provenance:'FARMER_ENTERED' };
+    try {
+      await api(`/api/farms/${encodeURIComponent(state.farmId)}/water-availability`, { method:'POST', body:JSON.stringify(payload) });
+      dialog.close();
+      await loadDashboard();
+      toast(t('forms.saved'));
+    } catch (error) { toast(translateError(error)); }
+  });
+}
+
+function openFinancialScenarioForm(record = null) {
+  $('#dialog-content').innerHTML = `<h2 class="modal-title">${t(record ? 'memory.editFinancialScenario' : 'memory.addFinancialScenario')}</h2>${financialScenarioForm(record || {})}`;
+  const dialog = $('#action-dialog');
+  dialog.showModal();
+  $('[data-close-dialog]')?.addEventListener('click', () => dialog.close());
+  $('#financial-scenario-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const raw = Object.fromEntries(new FormData(event.currentTarget).entries());
+    const expenses = Object.fromEntries(['seed','labour','other'].map((key) => [key, numberOrNull(raw[key])]));
+    if (raw.expensesComplete === 'on' && Object.values(expenses).some((value) => value == null)) {
+      toast(t('memory.costsNeedComplete'));
+      return;
+    }
+    const payload = {
+      ...raw,
+      farmId:state.farmId,
+      cropPlanId:raw.cropPlanId || null,
+      zoneId:record?.zoneId || null,
+      expectedYieldQuintal:numberOrNull(raw.expectedYieldQuintal),
+      pricePerQuintal:numberOrNull(raw.pricePerQuintal),
+      expenses,
+      expensesComplete:raw.expensesComplete === 'on',
+      assumptions:raw.assumptions.split(/\r?\n/).map((value) => value.trim()).filter(Boolean)
+    };
+    try {
+      await api(record
+        ? `/api/farms/${encodeURIComponent(state.farmId)}/financial-scenarios/${encodeURIComponent(record.id)}`
+        : `/api/farms/${encodeURIComponent(state.farmId)}/financial-scenarios`,
+      { method:record ? 'PUT' : 'POST', body:JSON.stringify(payload) });
+      dialog.close();
+      await loadDashboard();
+      toast(t('forms.saved'));
+    } catch (error) {
+      toast(translateError(error));
+    }
+  });
+}
+
 async function loadMarket() {
   try {
     const [market, schemes] = await Promise.all([api('/api/market'), api('/api/schemes')]);
@@ -632,10 +991,8 @@ async function loadDashboard() {
       }
     });
     if (decisions.irrigation.quantityLitres == null) decisions.irrigation.recommendation = t('engine.irrigationUnavailable');
-    decisions.irrigation.reasons = [t('engine.irrigationReasons')];
     decisions.irrigation.safety = t('monitor.safety');
     decisions.waterBudget.assumptions = [t('engine.waterAssumptions')];
-    decisions.risks.forEach((item) => { item.reasons = [t('engine.riskUnvalidated')]; });
     if (!decisions.profit.future.available) decisions.profit.future.assumptions = [t('engine.futureUnavailable')];
     for (const key of ['strengths', 'limitations', 'missing']) {
       decisions.landPower[key] = decisions.landPower[key].map(localizedDataText);
@@ -675,6 +1032,12 @@ function wire() {
   $('[data-action="add-farm"]')?.addEventListener('click', () => openFarmForm());
   $('[data-action="add-zone"]')?.addEventListener('click', () => openZoneForm());
   $('[data-action="add-season"]')?.addEventListener('click', () => openSeasonForm());
+  $('[data-action="add-crop-plan"]')?.addEventListener('click', () => openCropPlanForm());
+  $('[data-action="add-planning-period"]')?.addEventListener('click', openPlanningPeriodForm);
+  $('[data-action="add-effective-rainfall"]')?.addEventListener('click', openEffectiveRainfallForm);
+  $('[data-action="add-water-availability"]')?.addEventListener('click', openWaterAvailabilityForm);
+  $('[data-action="add-water-use"]')?.addEventListener('click', openWaterUseForm);
+  $('[data-action="add-financial-scenario"]')?.addEventListener('click', () => openFinancialScenarioForm());
   $('[data-action="log-activity"]')?.addEventListener('click', () => openForm('forms.activityTitle', '/api/activities', activityForm()));
   $('[data-action="add-soil"]')?.addEventListener('click', () => openForm('forms.soilTitle', '/api/soil-tests', soilForm()));
   $('[data-action="add-reading"]')?.addEventListener('click', () => openForm('forms.readingTitle', '/api/sensor-readings', readingForm()));
@@ -722,6 +1085,14 @@ function wire() {
   document.querySelectorAll('[data-edit-season]').forEach((button) => button.addEventListener('click', () => {
     const record = state.dashboard?.seasons.find((item) => item.id === button.dataset.editSeason);
     if (record) openSeasonForm(record);
+  }));
+  document.querySelectorAll('[data-edit-crop-plan]').forEach((button) => button.addEventListener('click', () => {
+    const record = state.dashboard?.cropPlans.find((item) => item.id === button.dataset.editCropPlan);
+    if (record) openCropPlanForm(record);
+  }));
+  document.querySelectorAll('[data-edit-financial-scenario]').forEach((button) => button.addEventListener('click', () => {
+    const record = state.dashboard?.financialScenarios.find((item) => item.id === button.dataset.editFinancialScenario);
+    if (record) openFinancialScenarioForm(record);
   }));
   document.querySelectorAll('[data-edit-activity]').forEach((button) => button.addEventListener('click', () => {
     const record = state.dashboard?.activities.find((item) => item.id === button.dataset.editActivity);
@@ -804,6 +1175,15 @@ function wire() {
     location.hash = `#${button.dataset.routeAction}`;
     $('#sidebar')?.classList.remove('open');
   }));
+  $('#memory-filters')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    state.memoryFilters = Object.fromEntries(new FormData(event.currentTarget).entries());
+    renderRoute();
+  });
+  $('[data-action="clear-memory-filters"]')?.addEventListener('click', () => {
+    state.memoryFilters = {};
+    renderRoute();
+  });
   document.querySelectorAll('[data-ack]').forEach((button) => button.addEventListener('click', async () => {
     try {
       await api(`/api/alerts/${button.dataset.ack}/acknowledge`, { method:'POST' });

@@ -22,6 +22,7 @@ import {
   cropPlanPayload,
   effectiveRainfallPayload,
   enumValue,
+  financialScenarioPayload,
   farmPayload,
   harvestPayload,
   nonNegative,
@@ -235,6 +236,20 @@ export function createApp(customStore) {
     }
   };
 
+  const requireNoWaterDoubleCount = (farmId, zoneId, payload, existingId = null) => {
+    const components = new Set(['stored', 'reliable_incoming']);
+    const conflicts = store.scoped('waterAvailability', farmId).some((item) => item.id !== existingId
+      && item.measurementDate === payload.measurementDate
+      && ((item.waterType === 'aggregate_available' && components.has(payload.waterType))
+        || (payload.waterType === 'aggregate_available' && components.has(item.waterType))));
+    if (conflicts) {
+      const error = new Error('Aggregate availability cannot be recorded alongside stored or incoming components for the same scope and date');
+      error.status = 409;
+      error.code = 'water_availability_double_count';
+      throw error;
+    }
+  };
+
   const getUserFarms = (user) => {
     if (user.role === 'ADMIN') {
       return store.list('farms');
@@ -249,6 +264,7 @@ export function createApp(customStore) {
     const zones = store.scoped('zones', farmId);
     const activeCrops = store.scoped('activeCrops', farmId);
     const cropPlans = store.scoped('cropPlans', farmId);
+    const financialScenarios = store.scoped('financialScenarios', farmId);
     const planningPeriods = store.scoped('planningPeriods', farmId);
     const effectiveRainfall = store.scoped('effectiveRainfall', farmId);
     const waterAvailability = store.scoped('waterAvailability', farmId);
@@ -263,10 +279,32 @@ export function createApp(customStore) {
       seasons,
       soilTests,
       zones,
-      activeCrops,
+      activeCrops: [
+        ...activeCrops,
+        ...cropPlans.filter((plan) => ['planned', 'active'].includes(plan.status)).map((plan) => ({
+          crop:plan.crop,
+          growthStage:plan.currentGrowthStage || null
+        }))
+      ],
       sensorReadings,
       activities,
       weather: decisionWeather,
+      financialScenarios: financialScenarios.filter((scenario) => scenario.source === 'FARMER_ENTERED'
+        && scenario.expectedYieldQuintal != null
+        && scenario.pricePerQuintal != null
+        && scenario.expensesComplete === true
+        && scenario.expenses && Object.keys(scenario.expenses).length > 0
+        && Object.values(scenario.expenses).every((value) => value != null)).map((scenario) => ({
+        id:scenario.id,
+        label:scenario.scenario,
+        crop:scenario.crop,
+        yieldQuintal:scenario.expectedYieldQuintal,
+        pricePerQuintal:scenario.pricePerQuintal,
+        expenses:scenario.expenses,
+        expensesComplete:scenario.expensesComplete,
+        source:scenario.source,
+        assumptions:scenario.assumptions
+      })),
       dataMode: store.data.sourceMode || 'UNKNOWN'
     });
     const {
@@ -284,6 +322,7 @@ export function createApp(customStore) {
       zones,
       activeCrops,
       cropPlans,
+      financialScenarios,
       planningPeriods,
       effectiveRainfall,
       waterAvailability,
@@ -536,6 +575,7 @@ export function createApp(customStore) {
       'effectiveRainfall',
       'waterAvailability',
       'waterUseEvents',
+      'financialScenarios',
       'sensorReadings',
       'sensorDevices',
       'weather',
@@ -653,6 +693,9 @@ export function createApp(customStore) {
     if (!existing) return fail(res, 404, 'not_found', 'Crop plan not found');
     verifyFarm(req, req.params.farmId);
     if (existing.farmId !== req.params.farmId) return fail(res, 422, 'farm_mismatch', 'Crop plan does not belong to this farm');
+    const referenced = ['planningPeriods', 'waterUseEvents', 'financialScenarios'].some((collection) =>
+      store.list(collection).some((item) => item.cropPlanId === req.params.planId));
+    if (referenced) return fail(res, 409, 'crop_plan_has_history', 'A crop plan with linked records cannot be deleted; mark it completed or cancelled instead');
     store.remove('cropPlans', req.params.planId);
     ok(res, { message: 'Crop plan deleted successfully', planId: req.params.planId });
   }));
@@ -699,6 +742,9 @@ export function createApp(customStore) {
     if (!existing) return fail(res, 404, 'not_found', 'Planning period not found');
     verifyFarm(req, req.params.farmId);
     if (existing.farmId !== req.params.farmId) return fail(res, 422, 'farm_mismatch', 'Planning period does not belong to this farm');
+    if (store.list('effectiveRainfall').some((item) => item.planningPeriodId === req.params.periodId)) {
+      return fail(res, 409, 'planning_period_has_records', 'A planning period with rainfall records cannot be deleted');
+    }
     store.remove('planningPeriods', req.params.periodId);
     ok(res, { message: 'Planning period deleted successfully', periodId: req.params.periodId });
   }));
@@ -760,6 +806,7 @@ export function createApp(customStore) {
     verifyFarm(req, req.params.farmId);
     const payload = waterAvailabilityPayload({ ...req.body, farmId: req.params.farmId });
     if (payload.zoneId) verifyZoneForFarm(req.params.farmId, payload.zoneId);
+    requireNoWaterDoubleCount(req.params.farmId, payload.zoneId, payload);
     const record = {
       id: store.makeId('water-availability'),
       ...payload,
@@ -777,6 +824,7 @@ export function createApp(customStore) {
     if (existing.farmId !== req.params.farmId) return fail(res, 422, 'farm_mismatch', 'Water availability record does not belong to this farm');
     const payload = waterAvailabilityPayload({ ...existing, ...req.body, farmId: req.params.farmId });
     if (payload.zoneId) verifyZoneForFarm(req.params.farmId, payload.zoneId);
+    requireNoWaterDoubleCount(req.params.farmId, payload.zoneId, payload, req.params.recordId);
     ok(res, store.update('waterAvailability', req.params.recordId, {
       ...payload,
       updatedAt: store.now()
@@ -833,6 +881,55 @@ export function createApp(customStore) {
     if (existing.farmId !== req.params.farmId) return fail(res, 422, 'farm_mismatch', 'Water use event does not belong to this farm');
     store.remove('waterUseEvents', req.params.eventId);
     ok(res, { message: 'Water use event deleted successfully', eventId: req.params.eventId });
+  }));
+
+  app.get('/api/farms/:farmId/financial-scenarios', auth, wrap((req, res) => {
+    verifyFarm(req, req.params.farmId);
+    ok(res, store.scoped('financialScenarios', req.params.farmId));
+  }));
+
+  app.post('/api/farms/:farmId/financial-scenarios', auth, wrap((req, res) => {
+    verifyFarm(req, req.params.farmId);
+    const payload = financialScenarioPayload({ ...req.body, farmId: req.params.farmId });
+    if (payload.zoneId) verifyZoneForFarm(req.params.farmId, payload.zoneId);
+    if (payload.cropPlanId) {
+      const plan = verifyCropPlanForFarm(req.params.farmId, payload.zoneId || store.list('cropPlans').find((item) => item.id === payload.cropPlanId)?.zoneId, payload.cropPlanId);
+      if (!['planned', 'active'].includes(plan.status)) return fail(res, 422, 'crop_plan_not_plannable', 'Financial scenarios can only be linked to planned or active crop plans');
+      if (payload.crop.toLowerCase() !== plan.crop.toLowerCase()) {
+        return fail(res, 422, 'crop_plan_crop_mismatch', 'Scenario crop must match the linked crop plan');
+      }
+      payload.zoneId = plan.zoneId;
+    }
+    const record = { id:store.makeId('financial-scenario'), ...payload, createdAt:store.now(), updatedAt:store.now() };
+    store.add('financialScenarios', record);
+    ok(res, record, 201);
+  }));
+
+  app.put('/api/farms/:farmId/financial-scenarios/:scenarioId', auth, wrap((req, res) => {
+    const existing = store.list('financialScenarios').find((item) => item.id === req.params.scenarioId);
+    if (!existing) return fail(res, 404, 'not_found', 'Financial scenario not found');
+    verifyFarm(req, req.params.farmId);
+    if (existing.farmId !== req.params.farmId) return fail(res, 422, 'farm_mismatch', 'Financial scenario does not belong to this farm');
+    const payload = financialScenarioPayload({ ...existing, ...req.body, farmId:req.params.farmId });
+    if (payload.zoneId) verifyZoneForFarm(req.params.farmId, payload.zoneId);
+    if (payload.cropPlanId) {
+      const plan = verifyCropPlanForFarm(req.params.farmId, payload.zoneId || store.list('cropPlans').find((item) => item.id === payload.cropPlanId)?.zoneId, payload.cropPlanId);
+      if (!['planned', 'active'].includes(plan.status)) return fail(res, 422, 'crop_plan_not_plannable', 'Financial scenarios can only be linked to planned or active crop plans');
+      if (payload.crop.toLowerCase() !== plan.crop.toLowerCase()) {
+        return fail(res, 422, 'crop_plan_crop_mismatch', 'Scenario crop must match the linked crop plan');
+      }
+      payload.zoneId = plan.zoneId;
+    }
+    ok(res, store.update('financialScenarios', req.params.scenarioId, { ...payload, updatedAt:store.now() }));
+  }));
+
+  app.delete('/api/farms/:farmId/financial-scenarios/:scenarioId', auth, wrap((req, res) => {
+    const existing = store.list('financialScenarios').find((item) => item.id === req.params.scenarioId);
+    if (!existing) return fail(res, 404, 'not_found', 'Financial scenario not found');
+    verifyFarm(req, req.params.farmId);
+    if (existing.farmId !== req.params.farmId) return fail(res, 422, 'farm_mismatch', 'Financial scenario does not belong to this farm');
+    store.remove('financialScenarios', req.params.scenarioId);
+    ok(res, { message:'Financial scenario deleted successfully', scenarioId:req.params.scenarioId });
   }));
 
   // -------------------------------------------------------------
@@ -1501,6 +1598,221 @@ export function createApp(customStore) {
     const farm = store.findFarm(req.params.id);
     if (!farm) return fail(res, 404, 'farm_not_found', 'Farm not found');
     ok(res, adminFarmRecord(farm));
+  }));
+
+  app.get('/api/admin/quality', auth, requireAdmin, wrap((req, res) => {
+    const farmId = adminQueryString(req.query.farmId, 'farmId', 64);
+    const zoneId = adminQueryString(req.query.zoneId, 'zoneId', 64);
+    const category = adminQueryString(req.query.category, 'category', 24);
+    const severity = adminQueryString(req.query.severity, 'severity', 12);
+    const recordType = adminQueryString(req.query.recordType, 'recordType', 32);
+    const range = adminDateRange(req.query);
+    const categories = ['MISSING', 'STALE', 'INVALID', 'INCONSISTENT', 'PROVENANCE'];
+    const severities = ['low', 'medium', 'high'];
+    if (category && !categories.includes(category)) return fail(res, 400, 'validation_error', 'category is not supported');
+    if (severity && !severities.includes(severity)) return fail(res, 400, 'validation_error', 'severity is not supported');
+    const recordTypes = ['farm', 'cropPlan', 'planningPeriod', 'effectiveRainfall', 'soilTest', 'sensorReading', 'waterAvailability', 'waterUseEvent', 'season', 'financialScenario', 'financialRecord'];
+    if (recordType && !recordTypes.includes(recordType)) return fail(res, 400, 'validation_error', 'recordType is not supported');
+    const cap = 500;
+    const allFarms = store.list('farms');
+    const eligibleFarms = farmId ? allFarms.filter((farm) => farm.id === farmId) : allFarms;
+    const farms = eligibleFarms.slice(0, cap);
+    const collections = [
+      'zones', 'cropPlans', 'planningPeriods', 'effectiveRainfall', 'soilTests',
+      'sensorReadings', 'waterAvailability', 'waterUseEvents', 'seasons',
+      'financialScenarios'
+    ];
+    const records = Object.fromEntries(collections.map((key) => [key, store.list(key).slice(0, cap)]));
+    const truncatedCollections = collections.filter((key) => store.list(key).length > cap);
+    const issues = [];
+    const safeValue = (value) => {
+      if (typeof value === 'number' && Number.isFinite(value)) return value;
+      if (typeof value === 'boolean') return value;
+      if (typeof value === 'string' && /^[A-Za-z0-9 _.-]{1,60}$/.test(value)) return value;
+      return value == null ? null : 'unavailable';
+    };
+    const addIssue = ({ farm, record, recordType:type, code, category:issueCategory, severity:issueSeverity, field, value, remediation, timestamp }) => {
+      issues.push({
+        id:`${type}:${record?.id || farm.id}:${code}`,
+        farmId:farm.id,
+        recordId:record?.id || farm.id,
+        zoneId:record?.zoneId || null,
+        recordType:type,
+        code,
+        category:issueCategory,
+        severity:issueSeverity,
+        field,
+        timestamp:timestamp || record?.updatedAt || record?.createdAt || record?.recordedAt || record?.date || null,
+        safeValue:safeValue(value),
+        remediation
+      });
+    };
+    const validDate = (value) => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
+      && !Number.isNaN(new Date(`${value}T00:00:00.000Z`).getTime())
+      && new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) === value;
+    const dateSpan = (start, end) => {
+      if (!validDate(start) || !validDate(end) || start > end) return 0;
+      return Math.floor((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86400000) + 1;
+    };
+    const today = new Date().toISOString().slice(0, 10);
+    const soilUnits = {
+      pH:['', 'unitless'], EC:['dS/m', 'mS/cm'], 'Organic carbon':['%', 'g/kg'],
+      N:['mg/kg', 'kg/ha', 'ppm'], P:['mg/kg', 'kg/ha', 'ppm'],
+      K:['mg/kg', 'kg/ha', 'ppm'], Moisture:['%']
+    };
+    for (const farm of farms) {
+      const byFarm = (key) => records[key].filter((item) => item.farmId === farm.id);
+      const zonesForFarm = byFarm('zones');
+      const plansForFarm = byFarm('cropPlans');
+      const periodsForFarm = byFarm('planningPeriods');
+      const rainForFarm = byFarm('effectiveRainfall');
+      const soilForFarm = byFarm('soilTests');
+      const readingsForFarm = byFarm('sensorReadings');
+      const waterForFarm = byFarm('waterAvailability');
+      const waterEventsForFarm = byFarm('waterUseEvents');
+      const seasonsForFarm = byFarm('seasons');
+      const scenariosForFarm = byFarm('financialScenarios');
+      if (!soilForFarm.length) addIssue({ farm, recordType:'farm', code:'soil_test_missing', category:'MISSING', severity:'medium', field:'soilTests', value:null, remediation:'Record a dated soil test with parameter, unit, method, and source.' });
+      if (!plansForFarm.some((plan) => ['planned','active'].includes(plan.status)) && zonesForFarm.length) {
+        addIssue({ farm, recordType:'farm', code:'active_crop_plan_missing', category:'MISSING', severity:'medium', field:'cropPlans', value:null, remediation:'Create a crop plan for the relevant field zone when known.' });
+      }
+      if (plansForFarm.some((plan) => plan.status === 'active') && !periodsForFarm.some((period) => ['draft','active'].includes(period.status))) {
+        addIssue({ farm, recordType:'farm', code:'planning_period_missing', category:'MISSING', severity:'medium', field:'planningPeriods', value:null, remediation:'Create an explicit planning period; do not assume a crop-cycle duration.' });
+      }
+      const knownZoneAreas = zonesForFarm.filter((zone) => Number.isFinite(zone.areaAcres) && zone.areaAcres > 0);
+      if (knownZoneAreas.length === zonesForFarm.length && zonesForFarm.length && Number.isFinite(farm.areaAcres)
+        && Math.abs(knownZoneAreas.reduce((sum, zone) => sum + zone.areaAcres, 0) - farm.areaAcres) > 0.01) {
+        addIssue({ farm, recordType:'farm', code:'zone_area_total_mismatch', category:'INCONSISTENT', severity:'medium', field:'zones.areaAcres', value:knownZoneAreas.reduce((sum, zone) => sum + zone.areaAcres, 0), remediation:'Review the recorded farm and zone areas with the farmer; do not alter measurements automatically.' });
+      }
+      for (const plan of plansForFarm) {
+        const zone = zonesForFarm.find((item) => item.id === plan.zoneId);
+        const missing = ['currentGrowthStage','sowingDate','season','agriculturalYear'].filter((key) => plan[key] == null || plan[key] === '');
+        if (missing.length) addIssue({ farm, record:plan, recordType:'cropPlan', code:'crop_plan_incomplete', category:'MISSING', severity:'medium', field:missing.join(','), value:missing.length, remediation:'Ask the farmer to add known crop stage, dates, season, or year; leave unknown values blank.' });
+        if (!zone) addIssue({ farm, record:plan, recordType:'cropPlan', code:'crop_plan_zone_mismatch', category:'INCONSISTENT', severity:'high', field:'zoneId', value:plan.zoneId, remediation:'Review the plan-to-zone link; preserve the farmer-entered crop record.' });
+        if ((plan.sowingDate && !validDate(plan.sowingDate))
+          || (plan.expectedHarvestDate && !validDate(plan.expectedHarvestDate))
+          || (plan.actualHarvestDate && !validDate(plan.actualHarvestDate))) {
+          addIssue({ farm, record:plan, recordType:'cropPlan', code:'crop_plan_invalid_date', category:'INVALID', severity:'high', field:'dates', value:null, remediation:'Correct malformed dates through the farmer record workflow.' });
+        }
+      }
+      for (const period of periodsForFarm) {
+        const span = dateSpan(period.startDate, period.endDate);
+        if (!span) {
+          addIssue({ farm, record:period, recordType:'planningPeriod', code:'planning_period_invalid_dates', category:'INVALID', severity:'high', field:'startDate,endDate', value:null, remediation:'Correct the period dates through the farmer planning form.' });
+          continue;
+        }
+        const associatedRain = rainForFarm.filter((item) => item.planningPeriodId === period.id);
+        const expectedEnd = period.status === 'active' ? (today < period.endDate ? today : period.endDate) : period.endDate;
+        const expected = dateSpan(period.startDate, expectedEnd);
+        const recordedDates = new Set();
+        for (const rainfall of associatedRain) {
+          if (!validDate(rainfall.observationDate)) {
+            addIssue({ farm, record:rainfall, recordType:'effectiveRainfall', code:'effective_rainfall_invalid_date', category:'INVALID', severity:'high', field:'observationDate', value:null, remediation:'Correct the observation date through the farmer planning form.' });
+          } else if (rainfall.observationDate < period.startDate || rainfall.observationDate > period.endDate) {
+            addIssue({ farm, record:rainfall, recordType:'effectiveRainfall', code:'effective_rainfall_outside_period', category:'INCONSISTENT', severity:'high', field:'observationDate', value:rainfall.observationDate, remediation:'Link this rainfall observation to the correct planning period.' });
+          }
+          if (recordedDates.has(rainfall.observationDate)) {
+            addIssue({ farm, record:rainfall, recordType:'effectiveRainfall', code:'effective_rainfall_duplicate_date', category:'INCONSISTENT', severity:'medium', field:'observationDate', value:rainfall.observationDate, remediation:'Review duplicate daily rainfall entries; retain only verified measurements.' });
+          }
+          recordedDates.add(rainfall.observationDate);
+          if (!Number.isFinite(rainfall.amount) || rainfall.amount < 0 || rainfall.unit !== 'mm') {
+            addIssue({ farm, record:rainfall, recordType:'effectiveRainfall', code:'effective_rainfall_invalid_measurement', category:'INVALID', severity:'high', field:'amount,unit', value:rainfall.amount, remediation:'Verify the effective rainfall value and unit against its source.' });
+          }
+          if (!rainfall.method || !rainfall.source) {
+            addIssue({ farm, record:rainfall, recordType:'effectiveRainfall', code:'effective_rainfall_provenance_missing', category:'PROVENANCE', severity:'low', field:'method,source', value:null, remediation:'Record the rainfall measurement method and source if known.' });
+          }
+        }
+        if (['active','completed'].includes(period.status) && expected > recordedDates.size) {
+          addIssue({ farm, record:period, recordType:'planningPeriod', code:'effective_rainfall_incomplete', category:'MISSING', severity:'medium', field:'effectiveRainfall', value:`${recordedDates.size}/${expected}`, remediation:'Record daily effective rainfall using an identified method, or keep the period incomplete. Do not substitute total rainfall or zero.' });
+        }
+        const zone = period.zoneId ? zonesForFarm.find((item) => item.id === period.zoneId) : null;
+        const plan = period.cropPlanId ? plansForFarm.find((item) => item.id === period.cropPlanId) : null;
+        if (period.zoneId && !zone || period.cropPlanId && (!plan || plan.zoneId !== period.zoneId)) {
+          addIssue({ farm, record:period, recordType:'planningPeriod', code:'planning_period_link_mismatch', category:'INCONSISTENT', severity:'high', field:'zoneId,cropPlanId', value:null, remediation:'Review the planning period links to a zone and crop plan.' });
+        }
+      }
+      const activePeriods = periodsForFarm.filter((period) => ['draft','active'].includes(period.status) && validDate(period.startDate) && validDate(period.endDate))
+        .sort((a,b) => a.startDate.localeCompare(b.startDate));
+      for (let index = 1; index < activePeriods.length; index += 1) {
+        const previous = activePeriods[index - 1], current = activePeriods[index];
+        const sameZone = previous.zoneId && previous.zoneId === current.zoneId;
+        const sameCropPlan = previous.cropPlanId && previous.cropPlanId === current.cropPlanId;
+        if ((sameZone || sameCropPlan) && previous.endDate >= current.startDate) {
+          addIssue({ farm, record:current, recordType:'planningPeriod', code:'planning_period_overlap', category:'INCONSISTENT', severity:'high', field:'startDate,endDate', value:null, remediation:'Resolve overlapping planning periods for the same zone or crop plan.' });
+        }
+      }
+      for (const soil of soilForFarm) {
+        if (soil.value == null || !soil.method) addIssue({ farm, record:soil, recordType:'soilTest', code:'soil_test_incomplete', category:'MISSING', severity:'medium', field:soil.value == null ? 'value' : 'method', value:soil.value, remediation:'Add the known measurement and laboratory method; do not infer missing values.' });
+        if (soil.value != null && soilUnits[soil.parameter] && !soilUnits[soil.parameter].includes(soil.unit || '')) {
+          addIssue({ farm, record:soil, recordType:'soilTest', code:'soil_test_unit_incompatible', category:'INVALID', severity:'high', field:'unit', value:soil.unit, remediation:'Verify the unit against the original lab report; do not convert unsupported measurements.' });
+        }
+        if (!soil.source || soil.source === 'UNKNOWN') addIssue({ farm, record:soil, recordType:'soilTest', code:'soil_test_source_unknown', category:'PROVENANCE', severity:'low', field:'source', value:soil.source, remediation:'Record the source if it is known; otherwise retain UNKNOWN.' });
+      }
+      for (const reading of readingsForFarm) {
+        const time = Date.parse(reading.recordedAt);
+        if (!Number.isFinite(time)) {
+          addIssue({ farm, record:reading, recordType:'sensorReading', code:'sensor_reading_invalid_timestamp', category:'INVALID', severity:'high', field:'recordedAt', value:null, remediation:'Check the sensor timestamp and device clock.' });
+        } else if (time > Date.now() + 5 * 60 * 1000) {
+          addIssue({ farm, record:reading, recordType:'sensorReading', code:'sensor_reading_future_timestamp', category:'INVALID', severity:'high', field:'recordedAt', value:null, remediation:'Check the sensor timestamp and device clock.' });
+        } else if (Date.now() - time > 60 * 60 * 1000) {
+          addIssue({ farm, record:reading, recordType:'sensorReading', code:'sensor_reading_stale', category:'STALE', severity:'medium', field:'recordedAt', value:Math.floor((Date.now() - time) / 60000), remediation:'Check sensor connectivity; record a fresh authenticated reading before using it for current calculations.' });
+        }
+        if (!reading.source || reading.source === 'UNKNOWN') addIssue({ farm, record:reading, recordType:'sensorReading', code:'sensor_reading_source_unknown', category:'PROVENANCE', severity:'low', field:'source', value:reading.source, remediation:'Verify the ingestion source; do not label an unverified reading as live.' });
+      }
+      for (const item of waterForFarm) {
+        if (!validDate(item.measurementDate) || !Number.isFinite(item.availableWaterLitres) || item.availableWaterLitres < 0 || !item.unit) {
+          addIssue({ farm, record:item, recordType:'waterAvailability', code:'water_inventory_invalid_measurement', category:'INVALID', severity:'high', field:'measurementDate,availableWaterLitres,unit', value:item.availableWaterLitres, remediation:'Verify the inventory date, non-negative quantity, and unit against its source.' });
+        }
+        if (item.waterType === 'aggregate_available' && waterForFarm.some((part) => part.id !== item.id
+          && ['stored','reliable_incoming'].includes(part.waterType) && part.measurementDate === item.measurementDate)) {
+          addIssue({ farm, record:item, recordType:'waterAvailability', code:'water_availability_double_count', category:'INCONSISTENT', severity:'high', field:'waterType', value:item.waterType, remediation:'Review whether this is an aggregate or component record; do not sum both.' });
+        }
+        if (item.provenance === 'UNKNOWN') addIssue({ farm, record:item, recordType:'waterAvailability', code:'water_inventory_source_unknown', category:'PROVENANCE', severity:'low', field:'provenance', value:item.provenance, remediation:'Record the provenance if known, otherwise keep it explicitly unknown.' });
+        if (item.validityPeriod && validDate(item.validityPeriod) && item.validityPeriod < today) {
+          addIssue({ farm, record:item, recordType:'waterAvailability', code:'water_inventory_expired', category:'STALE', severity:'medium', field:'validityPeriod', value:item.validityPeriod, remediation:'Re-measure or confirm water inventory validity with the farmer.' });
+        }
+      }
+      for (const event of waterEventsForFarm) {
+        if (!Number.isFinite(Date.parse(event.eventDateTime)) || !Number.isFinite(event.waterQuantity) || event.waterQuantity < 0 || !event.quantityUnit) {
+          addIssue({ farm, record:event, recordType:'waterUseEvent', code:'water_use_event_invalid_measurement', category:'INVALID', severity:'high', field:'eventDateTime,waterQuantity,quantityUnit', value:event.waterQuantity, remediation:'Verify the event timestamp, non-negative quantity, and unit against its source.' });
+        }
+        if (!event.recordProvenance || !event.sourceOfMeasurement) addIssue({ farm, record:event, recordType:'waterUseEvent', code:'water_use_event_provenance_missing', category:'PROVENANCE', severity:'low', field:'recordProvenance,sourceOfMeasurement', value:null, remediation:'Record the measurement source and provenance if known.' });
+      }
+      for (const event of [...waterEventsForFarm, ...seasonsForFarm, ...scenariosForFarm]) {
+        if (!event.source && !event.recordProvenance) addIssue({ farm, record:event, recordType:event.scenario ? 'financialScenario' : event.waterQuantity != null ? 'waterUseEvent' : 'financialRecord', code:'record_source_unknown', category:'PROVENANCE', severity:'low', field:'source', value:null, remediation:'Record a known source, or keep the record labelled as unknown.' });
+      }
+      for (const season of seasonsForFarm) {
+        if (season.yieldQuintal == null || season.sellingPricePerQuintal == null || season.expensesComplete !== true) {
+          addIssue({ farm, record:season, recordType:'season', code:'financial_record_incomplete', category:'MISSING', severity:'medium', field:'yield,price,expenses', value:null, remediation:'Add known yield, sale price, and complete itemized costs; do not replace unknowns with zero.' });
+        }
+      }
+      for (const scenario of scenariosForFarm) {
+        if (scenario.expectedYieldQuintal == null || scenario.pricePerQuintal == null || scenario.expensesComplete !== true
+          || !scenario.expenses || Object.values(scenario.expenses).some((value) => value == null)) {
+          addIssue({ farm, record:scenario, recordType:'financialScenario', code:'financial_scenario_incomplete', category:'MISSING', severity:'low', field:'yield,price,expenses', value:null, remediation:'Keep incomplete scenario values unknown; add explicit assumptions and all itemized costs before calculating.' });
+        }
+      }
+    }
+    const filtered = issues.filter((item) => (!zoneId || item.zoneId === zoneId)
+      && (!category || item.category === category)
+      && (!severity || item.severity === severity)
+      && (!recordType || item.recordType === recordType)
+      && adminInDateRange(item.timestamp, range));
+    const summary = {
+      totalFarms:farms.length,
+      farmsWithMissingPlanningInputs:new Set(issues.filter((item) => ['active_crop_plan_missing','planning_period_missing','effective_rainfall_incomplete'].includes(item.code)).map((item) => item.farmId)).size,
+      incompleteCropPlans:issues.filter((item) => item.code === 'crop_plan_incomplete').length,
+      incompleteRainfallPeriods:issues.filter((item) => item.code === 'effective_rainfall_incomplete').length,
+      staleSensorReadings:issues.filter((item) => item.code === 'sensor_reading_stale').length,
+      farmsMissingSoilTests:new Set(issues.filter((item) => item.code === 'soil_test_missing').map((item) => item.farmId)).size,
+      incompleteFinancialRecords:issues.filter((item) => ['financial_record_incomplete','financial_scenario_incomplete'].includes(item.code)).length,
+      inconsistentRecords:issues.filter((item) => item.category === 'INCONSISTENT').length,
+      byCategory:Object.fromEntries(categories.map((item) => [item, issues.filter((issue) => issue.category === item).length]))
+    };
+    const severityRank = { high:0, medium:1, low:2 };
+    filtered.sort((a,b) => severityRank[a.severity] - severityRank[b.severity]
+      || String(b.timestamp || '').localeCompare(String(a.timestamp || '')));
+    ok(res, { ...adminPage(filtered, req.query), summary, scanLimitPerCollection:cap, truncated:eligibleFarms.length > cap || truncatedCollections.length > 0, truncatedCollections });
   }));
 
   app.get('/api/admin/devices', auth, requireAdmin, wrap((req, res) => {

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  financialScenarioPayload,
   harvestPayload,
   nonNegative,
   optionalNumber,
@@ -104,4 +105,22 @@ test('date and measurement timestamp validation rejects normalized or timezone-f
   assert.equal(validateTimestamp('2026-03-01T10:20:30Z', 'recordedAt'), '2026-03-01T10:20:30Z');
   assert.throws(() => validateTimestamp('2026-03-01T10:20:30', 'recordedAt'), { code: 'validation_error' });
   assert.throws(() => validateTimestamp('2026-02-30T10:20:30Z', 'recordedAt'), { code: 'validation_error' });
+});
+
+test('financial scenarios require explicit units and preserve unknowns and explicit zeros', () => {
+  const record = financialScenarioPayload({
+    farmId:'farm-1', crop:'Millet', scenario:'low',
+    expectedYieldQuintal:'', yieldUnit:'quintal_total', pricePerQuintal:0,
+    currency:'INR', costUnit:'INR_total', expenses:{ seed:0, labour:null },
+    expensesComplete:false, assumptions:[], source:'FARMER_ENTERED'
+  });
+  assert.equal(record.expectedYieldQuintal, null);
+  assert.equal(record.pricePerQuintal, 0);
+  assert.equal(record.expenses.seed, 0);
+  assert.equal(record.expenses.labour, null);
+  assert.throws(() => financialScenarioPayload({
+    farmId:'farm-1', crop:'Millet', scenario:'low', expectedYieldQuintal:1,
+    pricePerQuintal:100, currency:'INR', costUnit:'INR_total', expenses:{ seed:1 },
+    expensesComplete:true, assumptions:[], source:'FARMER_ENTERED'
+  }), { code:'validation_error' });
 });

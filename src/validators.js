@@ -777,9 +777,9 @@ export function waterAvailabilityPayload(body) {
     : requireString(body.zoneId, 'zoneId', 64);
   if (zoneId) rejectHtml(zoneId, 'zoneId');
 
-  const waterType = enumValue(body.waterType || 'stored', 'waterType', ['stored', 'reliable_incoming', 'aggregate_available', 'unknown']);
+  const waterType = enumValue(body.waterType, 'waterType', ['stored', 'reliable_incoming', 'aggregate_available', 'unknown']);
   const amountLitres = nonNegative(body.availableWaterLitres, 'availableWaterLitres');
-  const unit = requireString(body.unit || 'litres', 'unit', 20);
+  const unit = requireString(body.unit, 'unit', 20);
   rejectHtml(unit, 'unit');
   if (!['litres', 'litre', 'l', 'liter', 'liters'].includes(unit.toLowerCase())) {
     const error = new Error('unit must be expressed in litres for water availability records');
@@ -827,11 +827,9 @@ export function waterUseEventPayload(body) {
     : requireString(body.cropPlanId, 'cropPlanId', 64);
   if (cropPlanId) rejectHtml(cropPlanId, 'cropPlanId');
 
-  const eventDateTime = body.eventDateTime == null || (typeof body.eventDateTime === 'string' && !body.eventDateTime.trim())
-    ? validateTimestamp(new Date().toISOString(), 'eventDateTime')
-    : validateTimestamp(body.eventDateTime, 'eventDateTime');
+  const eventDateTime = validateTimestamp(body.eventDateTime, 'eventDateTime');
   const waterQuantity = nonNegative(body.waterQuantity, 'waterQuantity');
-  const quantityUnit = enumValue((body.quantityUnit || 'litres').toLowerCase(), 'quantityUnit', ['litres', 'mm']);
+  const quantityUnit = enumValue(typeof body.quantityUnit === 'string' ? body.quantityUnit.toLowerCase() : body.quantityUnit, 'quantityUnit', ['litres', 'mm']);
   const applicationMethod = requireString(body.applicationMethod, 'applicationMethod', 80);
   rejectHtml(applicationMethod, 'applicationMethod');
   const sourceOfMeasurement = requireString(body.sourceOfMeasurement, 'sourceOfMeasurement', 80);
@@ -859,6 +857,79 @@ export function waterUseEventPayload(body) {
     sourceOfMeasurement,
     recordProvenance,
     notes
+  };
+}
+
+export function financialScenarioPayload(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    const error = new Error('Request body must be a JSON object');
+    error.status = 400;
+    error.code = 'validation_error';
+    throw error;
+  }
+
+  const farmId = requireString(body.farmId, 'farmId', 64);
+  rejectHtml(farmId, 'farmId');
+  const crop = requireString(body.crop, 'crop', 80);
+  rejectHtml(crop, 'crop');
+  const scenario = enumValue(body.scenario, 'scenario', ['low', 'medium', 'high']);
+  const zoneId = body.zoneId == null || (typeof body.zoneId === 'string' && !body.zoneId.trim())
+    ? null : requireString(body.zoneId, 'zoneId', 64);
+  const cropPlanId = body.cropPlanId == null || (typeof body.cropPlanId === 'string' && !body.cropPlanId.trim())
+    ? null : requireString(body.cropPlanId, 'cropPlanId', 64);
+  if (zoneId) rejectHtml(zoneId, 'zoneId');
+  if (cropPlanId) rejectHtml(cropPlanId, 'cropPlanId');
+
+  const expectedYieldQuintal = optionalNumber(body.expectedYieldQuintal, 'expectedYieldQuintal', { minimum: 0 });
+  const yieldUnit = enumValue(body.yieldUnit, 'yieldUnit', ['quintal_total']);
+  const pricePerQuintal = optionalNumber(body.pricePerQuintal, 'pricePerQuintal', { minimum: 0 });
+  const currency = enumValue(body.currency, 'currency', ['INR']);
+  const costUnit = enumValue(body.costUnit, 'costUnit', ['INR_total']);
+  let expenses = null;
+  if (body.expenses != null) {
+    if (typeof body.expenses !== 'object' || Array.isArray(body.expenses)) {
+      const error = new Error('expenses must be an object or null');
+      error.status = 400;
+      error.code = 'validation_error';
+      throw error;
+    }
+    expenses = {};
+    for (const [key, value] of Object.entries(body.expenses)) {
+      if (!/^[a-zA-Z0-9_-]{1,30}$/.test(key)) {
+        const error = new Error('expense category is invalid');
+        error.status = 400;
+        error.code = 'validation_error';
+        throw error;
+      }
+      expenses[key] = optionalNumber(value, `expenses.${key}`, { minimum: 0 });
+    }
+  }
+  if (body.expensesComplete != null && typeof body.expensesComplete !== 'boolean') {
+    const error = new Error('expensesComplete must be a boolean');
+    error.status = 400;
+    error.code = 'validation_error';
+    throw error;
+  }
+  if (body.assumptions != null && (!Array.isArray(body.assumptions)
+    || body.assumptions.length > 20
+    || body.assumptions.some((item) => typeof item !== 'string' || item.length > 300))) {
+    const error = new Error('assumptions must be an array of up to 20 short strings');
+    error.status = 400;
+    error.code = 'validation_error';
+    throw error;
+  }
+  const assumptions = (body.assumptions || []).map((item) => {
+    rejectHtml(item, 'assumptions');
+    return item.trim();
+  });
+  const source = enumValue(body.source, 'source', ['FARMER_ENTERED', 'DEMONSTRATION_DATA']);
+
+  return {
+    farmId, zoneId, cropPlanId, crop, scenario,
+    expectedYieldQuintal, yieldUnit, pricePerQuintal,
+    currency, costUnit, expenses,
+    expensesComplete: body.expensesComplete === true,
+    assumptions, source
   };
 }
 

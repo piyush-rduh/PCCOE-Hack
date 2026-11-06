@@ -10,9 +10,10 @@
 - [x] Update farmer and admin API/UI consumers and English/Marathi/Hindi fallback notices without changing auth or storage backends.
 - [x] Add Python/Node integration and regression tests; document architecture, assumptions, and APIs.
 - [ ] Populate `python/agronomic_references.json` with locally reviewed authoritative values and scoring/essential-constraint rules before enabling crop ranking, exact irrigation quantities, or risk scores.
-- [ ] Expose farmer-entered planning-period effective rainfall, crop requirements, irrigation efficiency, and explicit low/medium/high financial scenarios through validated UI/API inputs.
-- [ ] Present Farm Memory's soil-history trends and admin decision data-quality details in dedicated UI views.
-- [ ] Translate all variable engine explanations and remaining decision details (not only standard UI notices/labels) in English, Marathi, and Hindi.
+- [x] Add validated farmer-owned crop plans, planning periods, effective-rainfall records, explicit water inventory/use records, and low/medium/high financial scenarios; keep reference-dependent water calculations gated until complete evidence is available.
+- [x] Present filtered Farm Memory timelines, comparable soil-history series, structured water/planning records, and distinct actual/demo/scenario finance.
+- [x] Add bounded admin-only data-quality summary and paginated issue views with safe values, filters, and remediation guidance.
+- [x] Return stable locale-neutral engine message codes and render translated English/Marathi/Hindi templates with parity and numeric-invariance tests.
 
 ## Phase 1: Security and Backend Foundation (Delivered)
 
@@ -71,10 +72,10 @@
 - [x] Compute Land Power as a transparent prototype indicator with provisional factor explanations, missing data, evidence completeness, and an explicit non-standardized disclaimer.
 - [ ] Provide reviewed restoration, balanced, and profit-oriented crop rankings; currently withheld until validated local references and essential constraints are configured.
 - [x] Provide zone-level records and zone-aware readings/recommendation context.
-- [ ] Provide a complete water budget when crop-period demand, effective rainfall, area, available water, and efficiency are known; otherwise show missing values.
+- [x] Preserve explicit crop-plan, planning-period, effective-rainfall and water-history records; keep the water budget unavailable when crop-period demand, effective rainfall, area, available water, or required efficiency is incomplete.
 - [ ] Provide precise irrigation depth/volume only when fresh measurements and reviewed crop parameters are present; never operate pumps automatically.
 - [ ] Provide drought/flood preparedness context; calibrated risk scores remain disabled until a validated regional method is reviewed.
-- [ ] Provide actual historical profit only when full expenses are confirmed; future low/medium/high outcomes await explicit scenario inputs.
+- [x] Provide actual historical profit only when full expenses are confirmed; future low/medium/high outcomes require complete explicit farmer-entered scenario inputs.
 - [x] Label market and government content as demonstration/source-based unless a verified integration is configured.
 - [x] Generate and acknowledge alerts for moisture, weather, water, crop stress, sensors, harvest, and activities.
 

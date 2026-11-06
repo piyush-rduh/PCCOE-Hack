@@ -32,6 +32,20 @@ test('English, Marathi, and Hindi locales expose the same translation structure'
   }
 });
 
+test('engine message templates preserve code and parameter contracts in every language', () => {
+  const english = readLocale('en').engineMessages;
+  const placeholderNames = (value) => [...value.matchAll(/\{(\w+)\}/g)].map((match) => match[1]).sort();
+  for (const language of ['mr', 'hi']) {
+    const translated = readLocale(language).engineMessages;
+    assert.deepEqual(Object.keys(translated).sort(), Object.keys(english).sort(), `${language} engine message codes`);
+    for (const [code, template] of Object.entries(english)) {
+      assert.deepEqual(placeholderNames(translated[code]), placeholderNames(template), `${language}.${code} placeholders`);
+      assert.notEqual(translated[code], template, `${language}.${code} must be translated`);
+    }
+  }
+  assert.deepEqual(placeholderNames(english['engine.sensor.moisture_recorded']), ['moisturePct', 'source']);
+});
+
 test('admin dashboard copy is translated and its language preference is independent', () => {
   const english = readLocale('en');
   const adminScript = fs.readFileSync(path.join(localeDirectory, '..', 'admin.js'), 'utf8');

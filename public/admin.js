@@ -215,7 +215,8 @@
     const modules = [
       ['overview','Overview','⌂'], ['farmers','Farmers','♙'], ['farms','Farms & zones','▦'],
       ['devices','IoT devices','◉'], ['readings','Sensor monitoring','◌'], ['alerts','Alert centre','!'],
-      ['decisions','Decision review','✓'], ['weather','Weather & risk','☼'], ['reports','Reports','⇩'], ['health','System health','⚙']
+      ['decisions','Decision review','✓'], ['weather','Weather & risk','☼'], ['quality','Data quality','⚑'],
+      ['reports','Reports','⇩'], ['health','System health','⚙']
     ];
 
     const loadPage = async (nextPage, nextFilters = {}) => {
@@ -579,6 +580,66 @@
             h('td', null, `${localizedStatus(drought?.confidence?.level)} / ${localizedStatus(flood?.confidence?.level)}`)
           )];
         }), 'No farm risk assessments are available.')
+      );
+    } else if (page === 'quality' && pageData) {
+      const summary = pageData.summary || {};
+      const categoryCounts = summary.byCategory || {};
+      const items = pageData.items || [];
+      content = h('div', null,
+        pageHeading('Farm data quality', 'Review missing, stale, invalid, inconsistent, and provenance issues. This read-only view exposes no farmer contact details or free-text notes.'),
+        h('div', { className:'grid metric-grid admin-metrics' },
+          [
+            ['Farms scanned', summary.totalFarms],
+            ['Farms with missing planning inputs', summary.farmsWithMissingPlanningInputs],
+            ['Incomplete crop plans', summary.incompleteCropPlans],
+            ['Incomplete rainfall periods', summary.incompleteRainfallPeriods],
+            ['Stale sensor readings', summary.staleSensorReadings],
+            ['Farms missing soil tests', summary.farmsMissingSoilTests],
+            ['Incomplete financial records', summary.incompleteFinancialRecords],
+            ['Inconsistent records', summary.inconsistentRecords]
+          ].map(([label, value]) => h(Metric, { key:label, label, value:formatNumber(value || 0), sub:'Current stored records' }))
+        ),
+        h('section', { className:'card' },
+          h('h2', null, 'Issues by category'),
+          h('div', { className:'grid metric-grid admin-quality-categories' },
+            ['MISSING','STALE','INVALID','INCONSISTENT','PROVENANCE'].map((category) =>
+              h(Metric, { key:category, label:category, value:formatNumber(categoryCounts[category] || 0), sub:'Matching issues' })
+            )
+          )
+        ),
+        filtersBar([
+          farmSelect(),
+          fieldLabel('Category', h('select', { name:'category', defaultValue:filters.category || '' },
+            h('option', { value:'' }, 'All categories'),
+            ...['MISSING','STALE','INVALID','INCONSISTENT','PROVENANCE'].map((value) => h('option', { key:value, value }, value))
+          )),
+          fieldLabel('Severity', h('select', { name:'severity', defaultValue:filters.severity || '' },
+            h('option', { value:'' }, 'All severities'),
+            ...['high','medium','low'].map((value) => h('option', { key:value, value }, value))
+          )),
+          fieldLabel('Record type', h('select', { name:'recordType', defaultValue:filters.recordType || '' },
+            h('option', { value:'' }, 'All record types'),
+            ...['farm','cropPlan','planningPeriod','effectiveRainfall','soilTest','sensorReading','waterAvailability','waterUseEvent','season','financialScenario','financialRecord'].map((value) =>
+              h('option', { key:value, value }, value)
+            )
+          )),
+          ...dateFilters()
+        ]),
+        pageData.truncated
+          ? h('div', { className:'notice' }, tx('Quality scan is bounded to {limit} records per collection. Some records were not included.', { limit:formatNumber(pageData.scanLimitPerCollection) }))
+          : null,
+        table(['Severity','Category','Farm','Record','Issue','Field / value','Detected','Suggested follow-up'], items.map((issue) =>
+          h('tr', { key:issue.id },
+            h('td', null, h('span', { className:`severity ${issue.severity === 'high' ? 'critical' : issue.severity}` }, tx(issue.severity))),
+            h('td', null, tx(issue.category)),
+            h('td', null, showText(issue.farmId)),
+            h('td', null, `${tx(issue.recordType)} · ${showText(issue.recordId)}`),
+            h('td', null, tx(issue.code)),
+            h('td', null, `${showText(issue.field)} · ${displayValue(issue.safeValue)}`),
+            h('td', null, dateTime(issue.timestamp)),
+            h('td', null, tx(issue.remediation))
+          )
+        ), 'No data-quality issues match the selected filters.')
       );
     } else if (page === 'reports') {
       content = h('div', null, pageHeading('Administrative reports', 'Export filtered records as CSV. Secrets, password hashes, bearer tokens and token hashes are excluded. Formula-leading strings are escaped.'),

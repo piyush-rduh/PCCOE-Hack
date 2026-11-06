@@ -37,6 +37,14 @@ The score is rounded and clamped from 0 to 100. Missing indicators do not change
 - Historical revenue uses recorded yield and selling price. Net profit requires complete itemized costs confirmed by the farmer; otherwise profit remains unknown.
 - Demonstration records are segregated from actual records. Future outcomes require explicit scenario inputs. The engine does not use demo mandi prices, demo crop yields, guessed expense multipliers, or probability claims.
 
+## Phase 4 planning-record gates
+
+- Crop plans, planning periods, daily effective-rainfall observations, water inventory/use records, and farmer-entered low/medium/high financial scenarios are stored as explicit records with dates, units, and provenance where applicable.
+- A recorded crop name or planning window does not supply crop water demand, root-zone depth, irrigation trigger/depth, or irrigation efficiency. Those values must come from reviewed local references or explicit supported inputs; they are not inferred.
+- Effective rainfall is kept separate from total rainfall. Aggregate available water is not added to stored or incoming components, and unknown availability is not zero.
+- Incomplete scenarios remain visible but are excluded from engine calculations. A scenario is only calculated when yield, price, non-empty itemized costs, and farmer confirmation that costs are complete are all present.
+- Stable multilingual message codes change presentation only. Numeric inputs, result values, availability, and reference status do not change with the selected language.
+
 ## Review checklist for future reference updates
 
 Every proposed regional entry should include:

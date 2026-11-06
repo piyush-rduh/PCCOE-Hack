@@ -69,7 +69,8 @@ test('admin dashboard APIs require verified administrator identity and omit cred
   const endpoints = [
     '/api/admin/overview', '/api/admin/farmers', '/api/admin/farmers/farmer-1',
     '/api/admin/farms', '/api/admin/farms/farm-1', '/api/admin/devices', '/api/admin/readings',
-    '/api/admin/alerts', '/api/admin/decisions', '/api/admin/weather', '/api/admin/health'
+    '/api/admin/alerts', '/api/admin/decisions', '/api/admin/weather', '/api/admin/health',
+    '/api/admin/quality'
   ];
 
   for (const endpoint of endpoints) {
@@ -98,6 +99,38 @@ test('admin dashboard APIs require verified administrator identity and omit cred
   client.store.update('sensorReadings', 'reading-authenticated', { recordedAt:new Date(Date.now() - 20 * 60 * 1000).toISOString() });
   const stale = (await (await client.get('/api/admin/devices?status=offline', { headers:auth(adminToken) })).json()).data;
   assert.equal(stale.total, 1, 'a stale authenticated reading is offline');
+});
+
+test('admin data-quality report is filtered, paginated, bounded, and omits free-text and personal data', async () => {
+  const client = createTestClient();
+  const farmerToken = await login(client, 'ramesh', 'farmer123');
+  const adminToken = await login(client, 'admin', 'admin123');
+  const headers = auth(adminToken);
+  client.store.add('cropPlans', {
+    id:'quality-plan', farmId:'farm-1', zoneId:'missing-zone', crop:'Test crop',
+    status:'active', sowingDate:'2026-02-31', expectedHarvestDate:null,
+    currentGrowthStage:null, season:null, agriculturalYear:null,
+    notes:'private free text should not be exposed', source:'FARMER_ENTERED'
+  });
+
+  const forbidden = await client.get('/api/admin/quality', { headers:auth(farmerToken) });
+  assert.equal(forbidden.status, 403);
+  const page = await client.get('/api/admin/quality?farmId=farm-1&category=INCONSISTENT&recordType=cropPlan&page=1&pageSize=1', { headers });
+  assert.equal(page.status, 200);
+  const payload = (await page.json()).data;
+  assert.equal(payload.items.length, 1);
+  assert.ok(payload.total >= 1);
+  assert.equal(payload.pageSize, 1);
+  assert.ok(payload.summary.totalFarms >= 1);
+  assert.equal(payload.items[0].category, 'INCONSISTENT');
+  assert.equal(payload.items[0].farmId, 'farm-1');
+  assert.equal(payload.items[0].recordId, 'quality-plan');
+  assert.equal(payload.items[0].safeValue, 'missing-zone');
+  const serialized = JSON.stringify(payload);
+  assert.doesNotMatch(serialized, /private free text|phone|farmer-1.*name|passwordHash|tokenHash/i);
+
+  const invalidFilter = await client.get('/api/admin/quality?category=UNKNOWN', { headers });
+  assert.equal(invalidFilter.status, 400);
 });
 
 test('admin farmer, farm, sensor filters and empty/error responses are bounded', async () => {

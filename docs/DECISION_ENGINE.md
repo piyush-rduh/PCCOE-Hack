@@ -47,10 +47,12 @@ Relevant optional fields include:
 - Water: `availableWaterLitres` means the already-aggregated usable amount. Alternatively, `storedWaterLitres` and `reliableIncomingWaterLitres` may be provided together. The engine does not add an incoming quantity to an already aggregated available-water value.
 - Soil test: `parameter`, numeric `value` or `null`, `unit`, `date`, and `source`.
 - Sensor reading: `soilMoisturePct`, `recordedAt`, and `source`.
-- Season history: crop, season/year, area, recorded yield/price and itemized expenses. `expensesComplete: true` is required before actual net profit is calculated.
+- - Season history: crop, season/year, area, recorded yield/price and itemized expenses. `expensesComplete: true` is required before actual net profit is calculated.
+- Financial scenario: farmer-entered low/medium/high scenario, explicit yield/price/cost units and assumptions. Only scenarios with non-null yield and price, non-empty itemized costs, and `expensesComplete: true` are sent to the engine.
+- Crop plans, planning periods, effective-rainfall records, water inventory and structured water-use events are stored and returned in the farm bundle. Crop plans provide recorded crop context, but no crop water demand or validated irrigation parameters are inferred from them.
 - `dataMode: "DEMO_DATA"` keeps synthetic sample figures out of actual-income fields.
 
-The production server currently passes stored farm records and does not provide reviewed crop water requirements, effective rainfall, a planning-period length, or financial planning scenarios. Such calculations correctly remain unavailable until those inputs are integrated through a validated source or farmer-entered contract.
+The farm bundle passes eligible farmer-entered financial scenarios and recorded crop-plan context. Water calculations remain unavailable unless the engine receives complete period-specific crop demand, effective rainfall, area, available water and (where needed) irrigation efficiency. The current planning records do not supply reviewed crop water requirements, and stored effective-rainfall/water-inventory records are not treated as a complete calculation bundle by themselves.
 
 ## Output contract
 
@@ -83,7 +85,18 @@ The top-level response follows the standard decision envelope:
 }
 ```
 
-Each module carries the same metadata and its own `result`, `reasons`, `assumptions`, `missingInputs`, `confidence`, `dataSources`, version, and timestamp. Direct fields are mirrored for the current UI/API compatibility. The water module's `decisionStatus` is `deficit`, `surplus`, or `insufficient_data`; its module-level `status` still means the calculation completed successfully. Python returns null numeric results where evidence is incomplete. Farmer clients localize standard explanatory notices, status labels, and missing-measurement labels in English, Marathi, or Hindi; selected language never changes calculations.
+Each module carries the same metadata and its own `result`, `reasons`, `messages`, `assumptions`, `missingInputs`, `confidence`, `dataSources`, version, and timestamp. `messages` is the locale-neutral explanation contract: each entry has a stable `engine.*` code and a `params` object. Irrigation also returns a `recommendationMessage`; unavailable recommendation categories return `messages` and `riskMessages`. Legacy English `reasons` and recommendation text remain for API compatibility, while the farmer UI renders the structured codes using `engineMessages` templates in English, Marathi, or Hindi. Numeric parameters stay numeric in the API and are not changed by language selection. The water module's `decisionStatus` is `deficit`, `surplus`, or `insufficient_data`; its module-level `status` still means the calculation completed successfully. Python returns null numeric results where evidence is incomplete.
+
+Example:
+
+```json
+{
+  "code": "engine.sensor.moisture_recorded",
+  "params": { "moisturePct": 20.0, "source": "LIVE_SENSOR" }
+}
+```
+
+The matching locale template is `engineMessages["engine.sensor.moisture_recorded"]`; all three catalogs must preserve the same code set and named placeholders. Missing templates render a localized unavailable message rather than displaying a success-shaped blank.
 
 ## Modules and formulas
 
@@ -139,7 +152,7 @@ No regional validated risk model or thresholds are currently configured. Consequ
 
 Recorded gross revenue is `recorded yield × recorded selling price`. Recorded net profit is available only when revenue and itemized expenses are present and the farmer confirms `expensesComplete`. Break-even price is `complete expenses ÷ recorded yield` when yield is positive. Demo-mode records appear only in the separate `demonstration` object and are never presented as actual farm income.
 
-Future scenario outcomes require explicit crop-specific scenario yield, price, expenses, source, and assumptions. The current storage/API does not provide these scenarios, so future totals remain null; demo market prices and prototype yield values are not used.
+Future scenario outcomes require explicit crop-specific scenario yield, price, expenses, source, and assumptions. Farmer-entered low/medium/high scenarios are stored separately from actual harvests and are only supplied to the engine when yield, price, and all itemized expenses are explicitly complete. Incomplete scenarios remain visible as unknown and are not calculated; demo market prices and prototype yield values are not used.
 
 ## Confidence, sources, and limitations
 
